@@ -1,0 +1,21 @@
+# Repository root: E:\Jenkins\ViShark
+# The application has its own, more detailed rules in streamhub/.gitignore.
+
+# Secrets: never commit, at any depth
+.env
+.env.*
+!.env.example
+
+# Transfer folder used to deliver files into this workspace
+.incoming/
+
+# Phase 0 reports describe this machine (disks, ports, versions).
+# The inspection scripts are kept; the generated reports are not.
+phase0/*-report.txt
+
+# Editor and OS clutter
+.vscode/
+*.code-workspace
+Thumbs.db
+desktop.ini
+.DS_Store
