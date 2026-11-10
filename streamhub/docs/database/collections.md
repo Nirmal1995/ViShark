@@ -16,14 +16,20 @@ Status: collections are added here as each phase introduces them.
 | `status`                 | `ACTIVE` \| `DEACTIVATED` | default `ACTIVE`                                                       |
 | `emailVerifiedAt`        | Date \| null              |                                                                        |
 | `passwordChangedAt`      | Date \| null              | set by password change/reset (Phase 3b)                                |
-| `lastLoginAt`            | Date \| null              |                                                                        |
+| `lastLoginAt`            | Date \| null              | set when a sign-in completes (after the second factor if MFA is on)    |
+| `mfa.enabledAt`          | Date \| null              | two-factor on since; the only MFA field loaded by default              |
+| `mfa.secret`             | string \| null            | **encrypted** TOTP seed (`v1.` AES-256-GCM), `select: false`           |
+| `mfa.pendingSecret`      | string \| null            | encrypted seed during enrolment, `select: false`                       |
+| `mfa.pendingCreatedAt`   | Date \| null              | enrolment must be confirmed within 10 minutes, `select: false`         |
+| `mfa.lastUsedStep`       | number                    | last accepted 30-second step (replay protection), `select: false`      |
+| `mfa.recoveryCodeHashes` | string[]                  | HMAC-SHA256 of unused recovery codes, `select: false`                  |
 | `createdAt`, `updatedAt` | Date                      | Mongoose timestamps                                                    |
 
 Schema mode `strict: 'throw'`: writing an unknown field is an error, not silently dropped.
 
 Indexes: `{ email: 1 }` unique.
 
-API responses use `UserDto` (`id, email, displayName, role, emailVerified, createdAt`); the document is never returned directly.
+API responses use `UserDto` (`id, email, displayName, role, emailVerified, mfaEnabled, createdAt`); the document is never returned directly.
 
 ## sessions
 

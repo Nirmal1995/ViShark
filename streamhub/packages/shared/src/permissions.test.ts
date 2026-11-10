@@ -7,12 +7,16 @@ describe('can', () => {
     expect(can('USER', 'profile:manage-own')).toBe(true);
   });
 
-  it.each(['video:manage', 'category:manage', 'user:manage', 'audit:read', 'stats:read'] as const)(
-    'denies users the admin permission %s',
-    (permission) => {
-      expect(can('USER', permission)).toBe(false);
-    },
-  );
+  it.each([
+    'video:manage',
+    'category:manage',
+    'user:manage',
+    'audit:read',
+    'stats:read',
+    'mfa:manage-own',
+  ] as const)('denies users the admin permission %s', (permission) => {
+    expect(can('USER', permission)).toBe(false);
+  });
 
   it('grants admins every permission', () => {
     for (const permission of PERMISSIONS) expect(can('ADMIN', permission)).toBe(true);

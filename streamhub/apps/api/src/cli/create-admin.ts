@@ -13,6 +13,7 @@
  */
 import mongoose from 'mongoose';
 import { loadConfig } from '../config/env.ts';
+import '../database/mongoose-settings.ts';
 import { createLogger } from '../infrastructure/logger.ts';
 import {
   AdminBootstrapError,

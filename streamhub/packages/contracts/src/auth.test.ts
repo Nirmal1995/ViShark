@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { loginBodySchema, registerBodySchema, updateProfileBodySchema } from './auth.ts';
+import {
+  loginBodySchema,
+  registerBodySchema,
+  updateProfileBodySchema,
+  mfaDisableBodySchema,
+  mfaVerifyBodySchema,
+  recoveryCodeSchema,
+  totpCodeSchema,
+} from './auth.ts';
 
 const valid = {
   email: 'Alice@Example.COM ',
@@ -53,5 +61,37 @@ describe('updateProfileBodySchema', () => {
     expect(updateProfileBodySchema.safeParse({ displayName: 'x', email: 'x@y.z' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('two-factor schemas', () => {
+  it('accepts a 6-digit code and nothing else', () => {
+    expect(totpCodeSchema.parse(' 123456 ')).toBe('123456');
+    for (const bad of ['12345', '1234567', '12345a', '']) {
+      expect(totpCodeSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it('normalises recovery codes (case, dash, spaces) and rejects look-alike characters', () => {
+    expect(recoveryCodeSchema.parse('K7M2P-X9QR4')).toBe('k7m2px9qr4');
+    expect(recoveryCodeSchema.parse('k7m2p x9qr4')).toBe('k7m2px9qr4');
+    for (const bad of ['k7m2p-x9qr', 'o7m2p-x9qr4', 'l7m2p-x9qr4', '17m2p-x9qr4']) {
+      expect(recoveryCodeSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it('takes exactly one second factor, never both or an operator object', () => {
+    expect(mfaVerifyBodySchema.safeParse({ code: '123456' }).success).toBe(true);
+    expect(mfaVerifyBodySchema.safeParse({ recoveryCode: 'k7m2p-x9qr4' }).success).toBe(true);
+    expect(
+      mfaVerifyBodySchema.safeParse({ code: '123456', recoveryCode: 'k7m2p-x9qr4' }).success,
+    ).toBe(false);
+    expect(mfaVerifyBodySchema.safeParse({}).success).toBe(false);
+    expect(mfaVerifyBodySchema.safeParse({ code: { $ne: null } }).success).toBe(false);
+  });
+
+  it('requires the password to turn two-factor off', () => {
+    expect(mfaDisableBodySchema.safeParse({ code: '123456' }).success).toBe(false);
+    expect(mfaDisableBodySchema.safeParse({ password: 'pw', code: '123456' }).success).toBe(true);
   });
 });

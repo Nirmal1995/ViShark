@@ -81,6 +81,7 @@ describe('profile (/users/me)', () => {
       'email',
       'emailVerified',
       'id',
+      'mfaEnabled',
       'role',
     ]);
   });

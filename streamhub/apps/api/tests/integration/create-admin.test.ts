@@ -99,6 +99,7 @@ describe('admin:create command (end-to-end smoke test)', () => {
           MONGO_URL: config.MONGO_URL,
           REDIS_URL: config.REDIS_URL,
           SESSION_SECRET: config.SESSION_SECRET,
+          MFA_ENCRYPTION_KEY: config.MFA_ENCRYPTION_KEY,
           LOG_LEVEL: 'silent',
         },
       },

@@ -3,6 +3,11 @@ import {
   deactivateAccountBodySchema,
   emailOnlyBodySchema,
   loginBodySchema,
+  mfaDisableBodySchema,
+  mfaEnableBodySchema,
+  mfaRecoveryCodesBodySchema,
+  mfaSetupBodySchema,
+  mfaVerifyBodySchema,
   registerBodySchema,
   resetPasswordBodySchema,
   sessionDtoSchema,
@@ -47,10 +52,16 @@ const ApiInfo = z.object({
   }),
 });
 
-function schema(s: z.ZodType): Record<string, unknown> {
-  const { $schema: _ignored, ...rest } = z.toJSONSchema(s, { target: 'draft-2020-12' });
+/**
+ * JSON Schema for a Zod schema. Request bodies are described as the client
+ * sends them (io: 'input'), before normalising transforms such as removing
+ * the dash from a recovery code.
+ */
+function schema(s: z.ZodType, io: 'input' | 'output' = 'output'): Record<string, unknown> {
+  const { $schema: _ignored, ...rest } = z.toJSONSchema(s, { target: 'draft-2020-12', io });
   return rest;
 }
+const body = (s: z.ZodType) => schema(s, 'input');
 
 const REQUEST_ID = '9a1c0f5e-6f7e-4a1b-9a53-2a6b8e3d2f10';
 
@@ -109,6 +120,11 @@ export function buildOpenApiDocument(version: string) {
         description: 'Registration, login, sessions, email verification and passwords',
       },
       { name: 'users', description: 'The signed-in user' },
+      {
+        name: 'mfa',
+        description:
+          'Two-factor authentication (TOTP authenticator apps). Enrolment is for administrators.',
+      },
     ],
     paths: {
       '/health/live': {
@@ -148,7 +164,7 @@ export function buildOpenApiDocument(version: string) {
           tags: ['auth'],
           summary: 'Current session',
           description:
-            'Returns `authenticated: false`, or the user and the CSRF token for this session.',
+            'Returns `authenticated: false` (plus `mfaPending: true` while a sign-in waits for its second factor), or the user and the CSRF token for this session.',
           responses: { '200': { description: 'Session state' } },
         },
       },
@@ -243,10 +259,20 @@ export function buildOpenApiDocument(version: string) {
           requestBody: { required: true, content: json('LoginBody') },
           responses: {
             '200': {
-              description: 'Signed in; session cookie set',
+              description:
+                'Signed in (`mfaRequired: false`), or password accepted and a second factor is needed (`mfaRequired: true`, continue with `POST /auth/mfa/verify`)',
               content: dataOf({
-                type: 'object',
-                properties: { user: ref('UserDto'), csrfToken: { type: 'string' } },
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      mfaRequired: { const: false },
+                      user: ref('UserDto'),
+                      csrfToken: { type: 'string' },
+                    },
+                  },
+                  { type: 'object', properties: { mfaRequired: { const: true } } },
+                ],
               }),
             },
             '401': errorResponse(
@@ -338,6 +364,146 @@ export function buildOpenApiDocument(version: string) {
           responses: { '204': { description: 'Revoked' }, ...errors('400', '401', '403', '404') },
         },
       },
+      '/api/v1/auth/mfa/verify': {
+        post: {
+          tags: ['mfa', 'auth'],
+          summary: 'Sign in, step 2: second factor',
+          description:
+            'After `POST /auth/login` returned `mfaRequired: true`. Send a 6-digit `code` from the authenticator app, or one `recoveryCode`. Each code works once. The pending sign-in expires after 5 minutes or 5 wrong codes.',
+          requestBody: { required: true, content: json('MfaVerifyBody') },
+          responses: {
+            '200': {
+              description: 'Signed in; new session cookie set',
+              content: dataOf({
+                type: 'object',
+                properties: {
+                  mfaRequired: { const: false },
+                  user: ref('UserDto'),
+                  csrfToken: { type: 'string' },
+                },
+              }),
+            },
+            '400': errorResponse(
+              'Wrong or already used code',
+              'INVALID_MFA_CODE',
+              'The code is incorrect or has already been used',
+            ),
+            '401': errorResponse(
+              'No pending sign-in, or it expired',
+              'MFA_CHALLENGE_EXPIRED',
+              'Your sign-in has expired. Please sign in again.',
+            ),
+            ...errors('429', '503'),
+          },
+        },
+      },
+      '/api/v1/auth/mfa/setup': {
+        post: {
+          tags: ['mfa'],
+          summary: 'Start two-factor setup',
+          description:
+            'Administrators only. Requires the password. Returns the secret and an `otpauth://` URI to add to an authenticator app (shown once). Confirm with `POST /auth/mfa/enable` within 10 minutes.',
+          security: authenticated,
+          requestBody: { required: true, content: json('MfaSetupBody') },
+          responses: {
+            '200': {
+              description: 'Secret for the authenticator app',
+              content: dataOf({
+                type: 'object',
+                properties: {
+                  secret: { type: 'string', example: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP' },
+                  otpauthUri: {
+                    type: 'string',
+                    example:
+                      'otpauth://totp/StreamHub:admin%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=StreamHub&algorithm=SHA1&digits=6&period=30',
+                  },
+                },
+              }),
+            },
+            '409': errorResponse(
+              'Already enabled',
+              'MFA_ALREADY_ENABLED',
+              'Two-factor authentication is already on',
+            ),
+            ...errors('400', '401', '403', '429'),
+          },
+        },
+      },
+      '/api/v1/auth/mfa/enable': {
+        post: {
+          tags: ['mfa'],
+          summary: 'Confirm setup with a first code',
+          description:
+            'Turns two-factor on and returns 10 single-use recovery codes (shown once). Signs out other devices and starts a new session here: use the new `csrfToken`.',
+          security: authenticated,
+          requestBody: { required: true, content: json('MfaEnableBody') },
+          responses: {
+            '200': {
+              description: 'Enabled',
+              content: dataOf({
+                type: 'object',
+                properties: {
+                  recoveryCodes: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    example: ['k7m2p-x9qr4', 'a3bc5-d6efg'],
+                  },
+                  csrfToken: { type: 'string' },
+                },
+              }),
+            },
+            '400': errorResponse(
+              'Wrong code or setup expired',
+              'INVALID_MFA_CODE',
+              'The code is incorrect or has already been used',
+            ),
+            ...errors('401', '403', '429'),
+          },
+        },
+      },
+      '/api/v1/auth/mfa/disable': {
+        post: {
+          tags: ['mfa'],
+          summary: 'Turn two-factor off',
+          description: 'Requires the password and a current code or a recovery code.',
+          security: authenticated,
+          requestBody: { required: true, content: json('MfaDisableBody') },
+          responses: {
+            '204': { description: 'Disabled' },
+            '400': errorResponse(
+              'Wrong password or code',
+              'INVALID_MFA_CODE',
+              'The code is incorrect or has already been used',
+            ),
+            ...errors('401', '403', '429'),
+          },
+        },
+      },
+      '/api/v1/auth/mfa/recovery-codes': {
+        post: {
+          tags: ['mfa'],
+          summary: 'Replace my recovery codes',
+          description:
+            'Requires the password and a current code. The old recovery codes stop working.',
+          security: authenticated,
+          requestBody: { required: true, content: json('MfaRecoveryCodesBody') },
+          responses: {
+            '200': {
+              description: 'New recovery codes (shown once)',
+              content: dataOf({
+                type: 'object',
+                properties: { recoveryCodes: { type: 'array', items: { type: 'string' } } },
+              }),
+            },
+            '400': errorResponse(
+              'Wrong password or code',
+              'INVALID_MFA_CODE',
+              'The code is incorrect or has already been used',
+            ),
+            ...errors('401', '403', '429'),
+          },
+        },
+      },
       '/api/v1/users/me': {
         get: {
           tags: ['users'],
@@ -384,14 +550,19 @@ export function buildOpenApiDocument(version: string) {
         ErrorBody: schema(ErrorBody),
         ReadinessReport: schema(ReadinessReport),
         ApiInfo: schema(ApiInfo),
-        RegisterBody: schema(registerBodySchema),
-        LoginBody: schema(loginBodySchema),
-        VerifyEmailBody: schema(verifyEmailBodySchema),
-        EmailOnlyBody: schema(emailOnlyBodySchema),
-        ResetPasswordBody: schema(resetPasswordBodySchema),
-        ChangePasswordBody: schema(changePasswordBodySchema),
-        DeactivateAccountBody: schema(deactivateAccountBodySchema),
-        UpdateProfileBody: schema(updateProfileBodySchema),
+        RegisterBody: body(registerBodySchema),
+        LoginBody: body(loginBodySchema),
+        VerifyEmailBody: body(verifyEmailBodySchema),
+        EmailOnlyBody: body(emailOnlyBodySchema),
+        ResetPasswordBody: body(resetPasswordBodySchema),
+        ChangePasswordBody: body(changePasswordBodySchema),
+        DeactivateAccountBody: body(deactivateAccountBodySchema),
+        UpdateProfileBody: body(updateProfileBodySchema),
+        MfaSetupBody: body(mfaSetupBodySchema),
+        MfaEnableBody: body(mfaEnableBodySchema),
+        MfaVerifyBody: body(mfaVerifyBodySchema),
+        MfaDisableBody: body(mfaDisableBodySchema),
+        MfaRecoveryCodesBody: body(mfaRecoveryCodesBodySchema),
         UserDto: schema(userDtoSchema),
         SessionDto: schema(sessionDtoSchema),
       },

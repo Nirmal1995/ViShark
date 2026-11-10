@@ -102,6 +102,11 @@ describe('versioned API and docs', () => {
       'forgot-password',
       'reset-password',
       'change-password',
+      'mfa/verify',
+      'mfa/setup',
+      'mfa/enable',
+      'mfa/disable',
+      'mfa/recovery-codes',
     ]) {
       expect(doc.paths).toHaveProperty([`/api/v1/auth/${path}`]);
     }
@@ -111,6 +116,7 @@ describe('versioned API and docs', () => {
       'UNAUTHENTICATED',
     );
     expect(JSON.stringify(doc)).not.toContain('"$schema"');
+    expect(doc.components.schemas.MfaVerifyBody.anyOf).toHaveLength(2);
   });
 
   it('serves Swagger UI when docs are enabled', async () => {

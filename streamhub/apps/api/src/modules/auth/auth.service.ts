@@ -96,6 +96,19 @@ export function createAuthService(deps: {
     );
   }
 
+  /**
+   * Final step of every successful sign-in. Reloads the user so a deactivation
+   * between the password step and the second factor is respected.
+   */
+  async function completeLogin(userId: string, method: 'password' | 'totp' | 'recovery') {
+    const user = await UserModel.findById(userId).exec();
+    if (!user || user.status !== 'ACTIVE') throw invalidCredentials();
+    user.lastLoginAt = new Date();
+    await user.save();
+    log.info({ event: 'auth.login.succeeded', userId, method }, 'login succeeded');
+    return user;
+  }
+
   return {
     /**
      * Creates an account. The response is identical whether or not the email
@@ -250,7 +263,7 @@ export function createAuthService(deps: {
      * error after the same amount of work (a dummy Argon2 verification), so
      * neither the message nor the response time reveals whether an account exists.
      */
-    async login(input: LoginBody): Promise<UserDocument> {
+    async login(input: LoginBody): Promise<{ user: UserDocument; mfaRequired: boolean }> {
       await throttle.assertAllowed(input.email);
 
       const user = await UserModel.findOne({ email: input.email }).select('+passwordHash').exec();
@@ -292,16 +305,25 @@ export function createAuthService(deps: {
 
       if (hasher.needsRehash(user.passwordHash)) {
         user.passwordHash = await hasher.hash(input.password);
+        await user.save();
         log.info(
           { event: 'auth.password.rehashed', userId: user._id.toString() },
           'password hash upgraded',
         );
       }
-      user.lastLoginAt = new Date();
-      await user.save();
 
-      log.info({ event: 'auth.login.succeeded', userId: user._id.toString() }, 'login succeeded');
-      return user;
+      if (user.mfa?.enabledAt) {
+        // Password is right, but the sign-in is not complete until the second
+        // factor is verified (POST /auth/mfa/verify).
+        log.info({ event: 'auth.mfa.challenged', userId: user._id.toString() }, 'mfa required');
+        return { user, mfaRequired: true as const };
+      }
+      return {
+        user: await completeLogin(user._id.toString(), 'password'),
+        mfaRequired: false as const,
+      };
     },
+
+    completeLogin,
   };
 }

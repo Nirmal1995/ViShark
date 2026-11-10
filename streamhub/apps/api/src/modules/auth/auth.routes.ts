@@ -13,7 +13,7 @@ import {
   type ResetPasswordBody,
   type VerifyEmailBody,
 } from '@streamhub/contracts';
-import { Router, type Request, type Response } from 'express';
+import { Router, type Response } from 'express';
 import type { Redis } from 'ioredis';
 import { notFound } from '../../common/errors.ts';
 import { ok } from '../../common/http.ts';
@@ -21,42 +21,10 @@ import { requireAuth, requirePermission } from '../../middleware/authenticate.ts
 import { rateLimit } from '../../middleware/rate-limit.ts';
 import { validate } from '../../middleware/validate.ts';
 import { toUserDto } from '../users/user.dto.ts';
-import type { UserDocument } from '../users/user.model.ts';
 import type { AuthService } from './auth.service.ts';
-import { cookieName, randomToken } from './session.ts';
+import { cookieName } from './session.ts';
+import { destroy, startMfaChallenge, startSession } from './session-actions.ts';
 import { listSessions, revokeOtherSessions, revokeSession } from './sessions.service.ts';
-
-const regenerate = (req: Request) =>
-  new Promise<void>((resolve, reject) =>
-    req.session.regenerate((err) => (err ? reject(err as Error) : resolve())),
-  );
-const save = (req: Request) =>
-  new Promise<void>((resolve, reject) =>
-    req.session.save((err) => (err ? reject(err as Error) : resolve())),
-  );
-const destroy = (req: Request) =>
-  new Promise<void>((resolve, reject) =>
-    req.session.destroy((err) => (err ? reject(err as Error) : resolve())),
-  );
-
-/**
- * Starts a fresh authenticated session. The previous session ID (if any) is
- * discarded: this is the session fixation defence, used at login and after a
- * password change.
- */
-async function startSession(req: Request, user: UserDocument): Promise<string> {
-  await regenerate(req);
-  const now = Date.now();
-  req.session.userId = user._id.toString();
-  req.session.handle = randomToken(16);
-  req.session.csrfToken = randomToken(32);
-  req.session.createdAt = now;
-  req.session.lastSeenAt = now;
-  req.session.userAgent = req.get('user-agent')?.slice(0, 256) ?? null;
-  req.session.ip = req.ip ?? null;
-  await save(req);
-  return req.session.csrfToken;
-}
 
 const ACCEPTED_MESSAGE = 'If an account exists for this email, we have sent instructions to it.';
 
@@ -85,7 +53,8 @@ export function authRouter(deps: {
   router.get('/session', (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) {
-      res.json(ok({ authenticated: false }));
+      const pending = req.session?.mfaPending;
+      res.json(ok({ authenticated: false, ...(pending ? { mfaPending: true } : {}) }));
       return;
     }
     res.json(
@@ -159,10 +128,15 @@ export function authRouter(deps: {
     validate({ body: loginBodySchema }),
     async (req, res) => {
       const { body } = res.locals.validated as { body: LoginBody };
-      const user = await deps.auth.login(body);
-      const csrfToken = await startSession(req, user);
+      const { user, mfaRequired } = await deps.auth.login(body);
       res.set('Cache-Control', 'no-store');
-      res.json(ok({ user: toUserDto(user), csrfToken }));
+      if (mfaRequired) {
+        await startMfaChallenge(req, user._id.toString());
+        res.json(ok({ mfaRequired: true }));
+        return;
+      }
+      const csrfToken = await startSession(req, user);
+      res.json(ok({ mfaRequired: false, user: toUserDto(user), csrfToken }));
     },
   );
 
@@ -189,6 +163,9 @@ export function authRouter(deps: {
     if (userId) {
       await destroy(req);
       req.log.info({ event: 'auth.logout', userId }, 'logged out');
+    } else if (req.session?.mfaPending) {
+      // Abandon a half-finished two-factor sign-in.
+      await destroy(req);
     }
     clearSessionCookie(res);
     res.status(204).end();

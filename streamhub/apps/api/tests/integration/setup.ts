@@ -43,13 +43,18 @@ export const ORIGIN = 'http://localhost:5273';
 export const PASSWORD = 'correct horse battery staple';
 
 export function testConfig(overrides: Record<string, string> = {}): AppConfig {
-  const base = loadConfig({ ...process.env, SESSION_SECRET: 'x'.repeat(48) });
+  const base = loadConfig({
+    ...process.env,
+    SESSION_SECRET: 'x'.repeat(48),
+    MFA_ENCRYPTION_KEY: 'k'.repeat(48),
+  });
   return loadConfig({
     ...process.env,
     NODE_ENV: 'test',
     MONGO_URL: testMongoUrl(base.MONGO_URL),
     REDIS_URL: testRedisUrl(base.REDIS_URL),
     SESSION_SECRET: 'integration-test-session-secret-0123456789abcdef',
+    MFA_ENCRYPTION_KEY: 'integration-test-mfa-encryption-key-0123456789',
     WEB_ORIGIN: ORIGIN,
     CSRF_EXTRA_TRUSTED_ORIGINS: '',
     AUTH_IP_LIMIT: '1000',
@@ -96,6 +101,8 @@ export function buildAuthApp(options: {
   extraRoutes?: { path: string; router: Router }[];
   /** Defaults to an in-memory mailer whose messages are discarded. */
   mailer?: Mailer;
+  /** Clock for TOTP checks. */
+  now?: () => number;
 }) {
   const config = options.config ?? testConfig();
   const auth = createAuthModule({
@@ -105,6 +112,7 @@ export function buildAuthApp(options: {
     mailer: options.mailer ?? createMemoryMailer().mailer,
     mongoClientPromise: Promise.resolve(mongoose.connection.getClient()),
     ...(options.policy ? { policy: options.policy } : {}),
+    ...(options.now ? { now: options.now } : {}),
   });
   auth.routes.push(...(options.extraRoutes ?? []));
   return createApp({

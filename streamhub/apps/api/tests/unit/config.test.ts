@@ -5,6 +5,7 @@ const base = {
   MONGO_URL: 'mongodb://user:s3cret-value@127.0.0.1:27017/streamhub',
   REDIS_URL: 'redis://default:pw@127.0.0.1:6379/0',
   SESSION_SECRET: 'x'.repeat(48),
+  MFA_ENCRYPTION_KEY: 'm'.repeat(48),
 };
 const productionBase = {
   ...base,
@@ -41,6 +42,7 @@ describe('loadConfig', () => {
     expect(() => loadConfig({})).toThrowError(/MONGO_URL: is required/);
     expect(() => loadConfig({})).toThrowError(/REDIS_URL: is required/);
     expect(() => loadConfig({})).toThrowError(/SESSION_SECRET: is required/);
+    expect(() => loadConfig({})).toThrowError(/MFA_ENCRYPTION_KEY: is required/);
   });
 
   it('rejects a short session secret', () => {

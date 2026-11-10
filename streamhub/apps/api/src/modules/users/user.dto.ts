@@ -10,7 +10,7 @@ export function toUserDto(
   user: Pick<
     UserDocument,
     '_id' | 'email' | 'displayName' | 'role' | 'emailVerifiedAt' | 'createdAt'
-  >,
+  > & { mfa?: { enabledAt?: Date | null } | null },
 ): UserDto {
   return {
     id: user._id.toString(),
@@ -18,6 +18,7 @@ export function toUserDto(
     displayName: user.displayName,
     role: user.role,
     emailVerified: Boolean(user.emailVerifiedAt),
+    mfaEnabled: Boolean(user.mfa?.enabledAt),
     createdAt: user.createdAt.toISOString(),
   };
 }

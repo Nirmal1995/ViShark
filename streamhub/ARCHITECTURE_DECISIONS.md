@@ -238,3 +238,27 @@ Status: Accepted (Phase 3b-1)
 - Context: a real-server run found a 500 that 179 passing tests missed, because the tests did not load the global `sanitizeFilter` setting.
 - Decision: `database/mongoose-settings.ts` sets `sanitizeFilter`, `strictQuery` and `bufferCommands=false`; the connection module and the integration test setup both import it, and a test asserts the settings are active. Server-built operators in filters are wrapped in `mongoose.trusted()`.
 - Consequences: test and production behaviour match for queries. Every future intentional operator must be marked trusted, which makes such places easy to review.
+
+## ADR-030: Optional TOTP for administrators, with a pending session between the two factors
+
+Status: Accepted (Phase 3b-2)
+
+- Context: the spec asks for optional admin MFA. Admin accounts can manage every video and user, so a stolen password alone should not be enough.
+- Decision: TOTP authenticator apps (no SMS: SIM swapping, cost). Enrolment needs `mfa:manage-own`, granted to admins only. After a correct password the session is regenerated and marked `mfaPending` without a `userId`, so it grants nothing; `POST /auth/mfa/verify` regenerates it again into a normal session. Recovery for a lost device is a server-side CLI, not an endpoint.
+- Consequences: two requests to sign in for admins with MFA. Not enforced yet; enforcing it for admins is a config flag to add before production. TOTP is not phishing-resistant; WebAuthn/passkeys are the long-term upgrade.
+
+## ADR-031: TOTP implemented on node:crypto, verified against the RFCs, instead of a library
+
+Status: Accepted (Phase 3b-2)
+
+- Context: otplib 13 pulls in six packages plus a third-party crypto implementation; the algorithm itself is HMAC-SHA1 plus a few lines of truncation.
+- Decision: about 60 lines in `totp.ts` using Node's built-in HMAC: no new dependency in the authentication path. Tests use the RFC 4226 and RFC 6238 vectors and the RFC 4648 base32 vectors; a one-off check against the independent `otpauth` library matched on 2,000 random seeds.
+- Consequences: we own the code, so it is covered by tests and mutation checks. No cryptographic primitive is hand-written; if requirements grow (other algorithms, HOTP counters), revisit a library.
+
+## ADR-032: Seeds encrypted with an HKDF-derived AES-256-GCM key; recovery codes as keyed hashes
+
+Status: Accepted (Phase 3b-2)
+
+- Context: a TOTP seed is a long-lived secret; anyone with it can generate valid codes forever. Database dumps and backups are the usual way such data leaks.
+- Decision: `MFA_ENCRYPTION_KEY` (environment only; AWS Secrets Manager in production) feeds HKDF-SHA256 to derive one AES-256-GCM key for seeds and one HMAC key for recovery codes. Random 12-byte IV per value, 16-byte tag enforced, the user ID as authenticated data, stored as `v1.<iv>.<tag>.<ciphertext>`. A value that does not decrypt is logged and treated as a wrong code, never a 500.
+- Consequences: a database dump alone yields neither usable seeds nor crackable recovery codes. Losing the key disables every enrolled authenticator (recovery: `admin:mfa-reset`). Key rotation is possible via the version prefix but not built yet.

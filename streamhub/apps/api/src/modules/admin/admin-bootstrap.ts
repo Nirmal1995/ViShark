@@ -55,7 +55,11 @@ export async function createAdmin(
   options: CreateAdminOptions,
   deps: { readPassword: () => Promise<string>; hasher: PasswordHasher; logger: Logger },
 ): Promise<CreateAdminResult> {
-  await UserModel.init();
+  // Make sure the unique email index exists before inserting. createIndexes()
+  // rather than init(): with bufferCommands off, init() runs (and fails) when
+  // the model is first imported, before the CLI has connected, and Mongoose
+  // caches that failure.
+  await UserModel.createIndexes();
   const existing = await UserModel.findOne({ email: options.email }).exec();
 
   if (existing?.role === 'ADMIN') return 'unchanged';

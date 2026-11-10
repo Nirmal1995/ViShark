@@ -26,6 +26,22 @@ const userSchema = new Schema(
     emailVerifiedAt: { type: Date, default: null },
     passwordChangedAt: { type: Date, default: null },
     lastLoginAt: { type: Date, default: null },
+    /**
+     * Two-factor authentication (TOTP). Everything secret is excluded from
+     * queries by default and the seeds are encrypted (secret-box.ts).
+     */
+    mfa: {
+      enabledAt: { type: Date, default: null },
+      /** Encrypted seed of the active authenticator. */
+      secret: { type: String, default: null, select: false },
+      /** Encrypted seed during enrolment, until the first code confirms it. */
+      pendingSecret: { type: String, default: null, select: false },
+      pendingCreatedAt: { type: Date, default: null, select: false },
+      /** Highest time step accepted so far: a code is never accepted twice. */
+      lastUsedStep: { type: Number, default: 0, select: false },
+      /** SHA-256 hashes of unused recovery codes. */
+      recoveryCodeHashes: { type: [String], default: [], select: false },
+    },
   },
   {
     timestamps: true,

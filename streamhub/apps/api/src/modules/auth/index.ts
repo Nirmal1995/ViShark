@@ -11,6 +11,9 @@ import { usersRouter } from '../users/users.routes.ts';
 import { authRouter } from './auth.routes.ts';
 import { createAuthService } from './auth.service.ts';
 import { createLoginThrottle } from './login-throttle.ts';
+import { mfaRouter } from './mfa.routes.ts';
+import { createMfaService } from './mfa.service.ts';
+import { createSecretBox } from './secret-box.ts';
 import { createPasswordHasher } from './password.ts';
 import {
   cookieName,
@@ -44,6 +47,10 @@ export type AuthModuleConfig = Pick<
   | 'AUTH_EMAIL_LIMIT_PER_HOUR'
   | 'EMAIL_VERIFICATION_TTL_HOURS'
   | 'PASSWORD_RESET_TTL_MINUTES'
+  | 'MFA_ENCRYPTION_KEY'
+  | 'MFA_ISSUER'
+  | 'AUTH_MFA_FAILURE_LIMIT'
+  | 'AUTH_MFA_FAILURE_WINDOW_SECONDS'
 >;
 
 export type AuthModule = {
@@ -61,12 +68,15 @@ export function createAuthModule(deps: {
   mongoClientPromise: Promise<MongoClient>;
   /** Tests override timeouts to seconds instead of minutes. */
   policy?: SessionPolicy;
+  /** Tests move the clock for TOTP replay and drift cases. */
+  now?: () => number;
 }): AuthModule {
   const { config } = deps;
   const policy = deps.policy ?? sessionPolicyFromConfig(config);
   const sessionCookie = cookieName(config.COOKIE_SECURE);
+  const hasher = createPasswordHasher(config);
   const auth = createAuthService({
-    hasher: createPasswordHasher(config),
+    hasher,
     throttle: createLoginThrottle(
       deps.redis,
       config.AUTH_ACCOUNT_FAILURE_LIMIT,
@@ -91,6 +101,20 @@ export function createAuthModule(deps: {
       resetTtlMinutes: config.PASSWORD_RESET_TTL_MINUTES,
     },
   });
+  const mfa = createMfaService({
+    box: createSecretBox(config.MFA_ENCRYPTION_KEY),
+    hasher,
+    redis: deps.redis,
+    logger: deps.logger,
+    mailer: deps.mailer,
+    settings: {
+      issuer: config.MFA_ISSUER,
+      failureLimit: config.AUTH_MFA_FAILURE_LIMIT,
+      failureWindowSeconds: config.AUTH_MFA_FAILURE_WINDOW_SECONDS,
+    },
+    ...(deps.now ? { now: deps.now } : {}),
+  });
+  const limits = { ipLimit: config.AUTH_IP_LIMIT, ipWindowSeconds: config.AUTH_IP_WINDOW_SECONDS };
   const clearSessionCookie = (res: Response) =>
     res.clearCookie(sessionCookie, {
       path: '/',
@@ -114,9 +138,11 @@ export function createAuthModule(deps: {
           auth,
           redis: deps.redis,
           cookieSecure: config.COOKIE_SECURE,
-          limits: { ipLimit: config.AUTH_IP_LIMIT, ipWindowSeconds: config.AUTH_IP_WINDOW_SECONDS },
+          limits,
         }),
       },
+      // Two-factor endpoints (/auth/mfa/...). The /auth router has no /mfa paths, so requests fall through to this one.
+      { path: '/auth/mfa', router: mfaRouter({ auth, mfa, redis: deps.redis, limits }) },
       { path: '/users', router: usersRouter({ auth, clearSessionCookie }) },
     ],
   };

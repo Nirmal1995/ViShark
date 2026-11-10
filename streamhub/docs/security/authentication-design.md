@@ -90,6 +90,38 @@ Always `202 Accepted` with the same message, whether or not the email exists, an
 
 **Local delivery** goes to Mailpit (SMTP 127.0.0.1:1025, inbox at http://127.0.0.1:8025). In AWS this becomes Amazon SES; only the `SMTP_*` settings change.
 
+## Two-factor authentication (Phase 3b-2)
+
+Optional TOTP (authenticator app codes, RFC 6238) for administrators.
+
+**Enrolment** (`mfa:manage-own`, admins only)
+
+1. `POST /auth/mfa/setup` with the password: a new 160-bit seed is stored **encrypted** as pending and returned once as base32 plus an `otpauth://` URI (the web app will show it as a QR code).
+2. `POST /auth/mfa/enable` with the first code within 10 minutes: MFA is on, 10 recovery codes are returned once, other sessions are signed out and this one gets a new ID and CSRF token. Notice email.
+
+**Sign-in**
+
+```
+POST /auth/login (password ok) ──► session regenerated, marked mfaPending (no userId: grants nothing)
+                                   response { mfaRequired: true }
+POST /auth/mfa/verify { code } or { recoveryCode }
+        ──► session regenerated again ──► normal authenticated session
+```
+
+- A pending session expires after 5 minutes or 5 wrong codes; any protected endpoint answers `401 MFA_REQUIRED`.
+- **Replay**: the time step of every accepted code is stored; a code is accepted only for a later step, in one atomic update, so the same code cannot work twice, even in two parallel requests.
+- **Guessing**: a code has a million values, so wrong codes are also counted **per account** in Redis across all sign-in attempts (`AUTH_MFA_FAILURE_LIMIT`, default 10 per 15 minutes; fails closed if Redis is down). Codes are compared in constant time; one step of clock drift is accepted either way.
+- **Deactivation** between the two steps is respected (the user is reloaded).
+
+**Storage**
+
+- Seeds: AES-256-GCM, key derived with HKDF from `MFA_ENCRYPTION_KEY` (environment only; AWS Secrets Manager in production). The user ID is authenticated data, so a seed copied onto another account does not decrypt. A 16-byte tag is enforced.
+- Recovery codes: 10 characters from a 31-character alphabet without look-alikes (about 49 bits each), stored as HMAC-SHA256 with a second derived key, so a database dump alone cannot brute-force them. Single use, removed atomically.
+
+**Management**: `POST /auth/mfa/disable` (password and a code or recovery code), `POST /auth/mfa/recovery-codes` (password and a code; old codes stop working). Each sends a notice email, as does using a recovery code.
+
+**Lost authenticator and recovery codes**: `pnpm admin:mfa-reset --email <email>` on the server removes MFA and signs the account out everywhere. Deliberately not an API endpoint: a stolen admin session cannot strip another admin's second factor. Confirm the person's identity before running it.
+
 ## CSRF
 
 Three layers for cookie-authenticated requests:
@@ -114,12 +146,13 @@ See the table in [observability](../operations/observability.md#security-events)
 
 ## Verification
 
-69 integration tests against real MongoDB, Redis and Mailpit plus 86 API unit tests cover the controls above, run with exactly the production Mongoose settings. Twenty controls were deliberately disabled one at a time; each sabotage made at least one test fail:
+90 integration tests against real MongoDB, Redis and Mailpit plus 124 API unit tests cover the controls above, run with exactly the production Mongoose settings. The TOTP code passes the RFC 4226 and RFC 6238 test vectors and matched an independent library (otpauth) on 2,000 random seeds. Thirty-three controls were deliberately disabled one at a time; each sabotage made at least one test fail:
 
 - Phase 3a: session regeneration, hashed session IDs, CSRF token, Origin check, deactivation check, IDOR scoping, account throttle, verification requirement, absolute timeout, foreign-handle 404.
 - Phase 3b-1: token single use, token hashing, token expiry, session revocation on reset, current-password check on change, password check on deactivate, per-address email cap, common-password list, `SESSION_EXPIRED`, HTML escaping in emails.
+- Phase 3b-2: replay protection, drift window, pending session granting access, per-attempt limit, per-account limit, recovery code single use, seed bound to its user, password on setup, admin-only setup, sign-out of other sessions on enable, challenge expiry, second factor on disable, MFA check at login.
 
-A real-server run (register, read the email from Mailpit, verify, sign in, change, forgot, reset, deactivate) passed 20/20 checks, and no token or password appeared in the logs.
+Real-server runs: the 3b-1 email flows passed 20/20 checks and the MFA flow (admin CLI, enrol, sign in with a code and with a recovery code, replay and reuse refused, CLI reset) passed 19/19. No token, seed, code or password appeared in the logs.
 
 ## Residual risks and planned work
 

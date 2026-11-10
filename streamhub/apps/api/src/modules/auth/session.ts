@@ -25,6 +25,11 @@ declare module 'express-session' {
     lastSeenAt: number;
     userAgent: string | null;
     ip: string | null;
+    /**
+     * Password verified, second factor not yet. A pending session has no
+     * userId, so nothing that requires authentication accepts it.
+     */
+    mfaPending: { userId: string; createdAt: number; attempts: number };
   }
 }
 

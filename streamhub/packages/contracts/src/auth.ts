@@ -86,6 +86,52 @@ export const deactivateAccountBodySchema = z.strictObject({
   password: z.string().min(1).max(PASSWORD_MAX_LENGTH),
 });
 
+/**
+ * Admin two-factor authentication (TOTP, RFC 6238). Codes are 6 digits from
+ * an authenticator app. Recovery codes are 10 characters from an alphabet
+ * without look-alike characters (no 0/o, 1/l/i), shown as "abcde-fghjk";
+ * input is accepted with or without the dash and in any case.
+ */
+export const RECOVERY_CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+export const totpCodeSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{6}$/, 'must be the 6-digit code from your authenticator app')
+  .meta({ example: '123456' });
+
+export const recoveryCodeSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .transform((value) => value.replace(/[\s-]/g, ''))
+  .pipe(z.string().regex(/^[a-hjkmnp-z2-9]{10}$/, 'invalid recovery code'))
+  .meta({ example: 'k7m2p-x9qr4' });
+
+const passwordConfirmationSchema = z
+  .string()
+  .min(1)
+  .max(PASSWORD_MAX_LENGTH)
+  .meta({ example: 'correct horse battery staple' });
+
+/** Second factor: either a current TOTP code or one unused recovery code. */
+export const secondFactorSchema = z.union([
+  z.strictObject({ code: totpCodeSchema }),
+  z.strictObject({ recoveryCode: recoveryCodeSchema }),
+]);
+
+export const mfaSetupBodySchema = z.strictObject({ password: passwordConfirmationSchema });
+export const mfaEnableBodySchema = z.strictObject({ code: totpCodeSchema });
+export const mfaVerifyBodySchema = secondFactorSchema;
+export const mfaDisableBodySchema = z.union([
+  z.strictObject({ password: passwordConfirmationSchema, code: totpCodeSchema }),
+  z.strictObject({ password: passwordConfirmationSchema, recoveryCode: recoveryCodeSchema }),
+]);
+export const mfaRecoveryCodesBodySchema = z.strictObject({
+  password: passwordConfirmationSchema,
+  code: totpCodeSchema,
+});
+
 export const roleSchema = z.enum(['USER', 'ADMIN']);
 
 export const userDtoSchema = z.object({
@@ -94,6 +140,7 @@ export const userDtoSchema = z.object({
   displayName: z.string(),
   role: roleSchema,
   emailVerified: z.boolean(),
+  mfaEnabled: z.boolean(),
   createdAt: z.string(),
 });
 
@@ -116,3 +163,9 @@ export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
 export type DeactivateAccountBody = z.infer<typeof deactivateAccountBodySchema>;
 export type UserDto = z.infer<typeof userDtoSchema>;
 export type SessionDto = z.infer<typeof sessionDtoSchema>;
+export type SecondFactor = z.infer<typeof secondFactorSchema>;
+export type MfaSetupBody = z.infer<typeof mfaSetupBodySchema>;
+export type MfaEnableBody = z.infer<typeof mfaEnableBodySchema>;
+export type MfaVerifyBody = z.infer<typeof mfaVerifyBodySchema>;
+export type MfaDisableBody = z.infer<typeof mfaDisableBodySchema>;
+export type MfaRecoveryCodesBody = z.infer<typeof mfaRecoveryCodesBodySchema>;

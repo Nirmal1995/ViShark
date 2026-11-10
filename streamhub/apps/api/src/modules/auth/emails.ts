@@ -97,3 +97,31 @@ export function accountDeactivatedEmail(to: string, name: string): MailMessage {
     'If this was not you, contact support.',
   ]);
 }
+
+export function mfaEnabledEmail(to: string, name: string): MailMessage {
+  return render(to, 'Two-factor authentication is on', name, [
+    'Two-factor authentication was turned on for your account. Signing in now also needs a code from your authenticator app.',
+    'Keep your recovery codes somewhere safe. If this was not you, contact support immediately.',
+  ]);
+}
+
+export function mfaDisabledEmail(to: string, name: string): MailMessage {
+  return render(to, 'Two-factor authentication was turned off', name, [
+    'Two-factor authentication was turned off for your account.',
+    'If this was not you, change your password and contact support immediately.',
+  ]);
+}
+
+export function recoveryCodeUsedEmail(to: string, name: string, remaining: number): MailMessage {
+  return render(to, 'A recovery code was used to sign in', name, [
+    `A recovery code was just used to sign in to your account. You have ${remaining} unused recovery codes left.`,
+    'If this was not you, change your password and contact support immediately.',
+  ]);
+}
+
+export function recoveryCodesRegeneratedEmail(to: string, name: string): MailMessage {
+  return render(to, 'New recovery codes were created', name, [
+    'New two-factor recovery codes were created for your account. The old ones no longer work.',
+    'If this was not you, change your password and contact support immediately.',
+  ]);
+}

@@ -5,7 +5,7 @@ import { UserModel, type UserDocument } from '../modules/users/user.model.ts';
 
 export type AuthenticatedUser = Pick<
   UserDocument,
-  '_id' | 'email' | 'displayName' | 'role' | 'status' | 'emailVerifiedAt' | 'createdAt'
+  '_id' | 'email' | 'displayName' | 'role' | 'status' | 'emailVerifiedAt' | 'createdAt' | 'mfa'
 >;
 
 declare global {
@@ -22,6 +22,19 @@ declare global {
 export const sessionExpired = () =>
   new AppError(401, 'SESSION_EXPIRED', 'Your session has expired, please sign in again');
 
+export const mfaRequired = () =>
+  new AppError(
+    401,
+    'MFA_REQUIRED',
+    'Enter the code from your authenticator app to finish signing in',
+  );
+
+/** Why an unauthenticated request was refused, most specific reason first. */
+function notSignedIn(req: Parameters<RequestHandler>[0]): AppError {
+  if (req.session?.mfaPending) return mfaRequired();
+  return req.staleSession ? sessionExpired() : unauthorized();
+}
+
 /**
  * Loads the current user from the database on every authenticated request.
  * Role and status are therefore always current: deactivating an account or
@@ -37,14 +50,14 @@ export function loadUser(sessionCookieName: string): RequestHandler {
         // A cookie that no longer maps to a session: expired, revoked or
         // logged out elsewhere. Lets the client say "session expired"
         // instead of a generic "please sign in".
-        req.staleSession = (req.headers.cookie ?? '')
-          .split(/;\s*/)
-          .some((c) => c.startsWith(cookiePrefix));
+        req.staleSession =
+          !req.session?.mfaPending &&
+          (req.headers.cookie ?? '').split(/;\s*/).some((c) => c.startsWith(cookiePrefix));
         next();
         return;
       }
       const user = await UserModel.findById(userId)
-        .select('email displayName role status emailVerifiedAt createdAt')
+        .select('email displayName role status emailVerifiedAt createdAt mfa.enabledAt')
         .lean<AuthenticatedUser>();
       if (!user || user.status !== 'ACTIVE') {
         req.session.destroy(() => next());
@@ -60,7 +73,7 @@ export function loadUser(sessionCookieName: string): RequestHandler {
 
 export const requireAuth: RequestHandler = (req, _res, next) => {
   if (req.user) next();
-  else next(req.staleSession ? sessionExpired() : unauthorized());
+  else next(notSignedIn(req));
 };
 
 /**
@@ -70,7 +83,7 @@ export const requireAuth: RequestHandler = (req, _res, next) => {
 export function requirePermission(permission: Permission): RequestHandler {
   return (req, _res, next) => {
     if (!req.user) {
-      next(req.staleSession ? sessionExpired() : unauthorized());
+      next(notSignedIn(req));
       return;
     }
     next(

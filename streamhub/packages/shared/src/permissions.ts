@@ -20,6 +20,8 @@ export const PERMISSIONS = [
   'sessions:manage-own',
   'favourites:manage-own',
   'history:manage-own',
+  // Enrol in two-factor authentication. Admin only for now (ADR-030).
+  'mfa:manage-own',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];

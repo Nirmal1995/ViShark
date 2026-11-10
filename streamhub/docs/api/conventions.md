@@ -37,14 +37,19 @@ Failure:
 | 400    | `INVALID_JSON`                              | body is not parseable JSON                                                                            |
 | 400    | `WEAK_PASSWORD`                             | password is too common or equals the email                                                            |
 | 400    | `INVALID_TOKEN`                             | verification or reset token is wrong, used or expired (always the same answer)                        |
+| 400    | `INVALID_MFA_CODE`                          | two-factor code wrong or already used, or wrong recovery code                                         |
+| 400    | `MFA_SETUP_EXPIRED`                         | two-factor setup not confirmed within 10 minutes                                                      |
 | 400    | `INVALID_CURRENT_PASSWORD`                  | change password: current password is wrong                                                            |
 | 401    | `UNAUTHENTICATED`                           | no valid session                                                                                      |
 | 401    | `INVALID_CREDENTIALS`                       | login failed (same for unknown email and wrong password)                                              |
+| 401    | `MFA_REQUIRED`                              | password accepted; finish with `POST /auth/mfa/verify`                                                |
+| 401    | `MFA_CHALLENGE_EXPIRED`                     | the two-factor step timed out or had too many wrong codes; sign in again                              |
 | 401    | `SESSION_EXPIRED`                           | a session cookie was sent but the session timed out or was revoked; sign in again                     |
 | 403    | `FORBIDDEN`                                 | authenticated but not allowed                                                                         |
 | 403    | `CSRF_FAILED`                               | missing or wrong `X-CSRF-Token`, or a cross-site `Origin`                                             |
 | 403    | `EMAIL_NOT_VERIFIED`, `ACCOUNT_DEACTIVATED` | correct password, but the account cannot sign in                                                      |
 | 404    | `NOT_FOUND`                                 | unknown route or resource (also used instead of 403 where revealing existence would leak information) |
+| 409    | `MFA_ALREADY_ENABLED`, `MFA_NOT_ENABLED`    | two-factor state does not allow this action                                                           |
 | 409    | `CONFLICT`                                  | duplicate or invalid state transition                                                                 |
 | 413    | `PAYLOAD_TOO_LARGE`                         | body over `API_BODY_LIMIT` (default 100 kB)                                                           |
 | 415    | `UNSUPPORTED_MEDIA_TYPE`                    | unsupported charset                                                                                   |

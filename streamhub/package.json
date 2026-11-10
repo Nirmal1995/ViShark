@@ -21,6 +21,7 @@
     "infra:test-db": "bash scripts/mongo-test-db.sh",
     "dev:api": "pnpm --filter @streamhub/api dev",
     "admin:create": "pnpm --filter @streamhub/api admin:create",
+    "admin:mfa-reset": "pnpm --filter @streamhub/api admin:mfa-reset",
     "build": "pnpm -r --if-present build",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --if-present typecheck",
     "lint": "eslint .",

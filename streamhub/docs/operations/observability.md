@@ -28,25 +28,32 @@ Local development: set `LOG_PRETTY=true` for colourised output (pino-pretty). Pr
 
 Authentication events carry an `event` field for filtering (CloudWatch Logs Insights: `filter event like /^auth\./`):
 
-| Event                                                                     | Level      | Fields                                                                        |
-| ------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
-| `auth.register` / `auth.register.duplicate`                               | info       | `userId` or `email` fingerprint                                               |
-| `auth.login.succeeded`                                                    | info       | `userId`                                                                      |
-| `auth.login.failed`                                                       | warn       | `email` fingerprint (truncated SHA-256)                                       |
-| `auth.login.blocked`                                                      | info/warn  | `userId`, `reason` (`unverified`, `deactivated`)                              |
-| `auth.logout`, `auth.session.revoked`, `auth.session.revoked_others`      | info       | `userId`, `revoked`                                                           |
-| `auth.password.rehashed`                                                  | info       | `userId`                                                                      |
-| `admin.created`, `admin.promoted`                                         | info       | `userId`, `via: cli`                                                          |
-| `auth.email.verified`                                                     | info       | `userId`                                                                      |
-| `auth.password.reset_requested` / `auth.password.reset_requested_unknown` | info       | `userId` or `email` fingerprint                                               |
-| `auth.password.reset`, `auth.password.changed`                            | info       | `userId`, `revokedSessions`                                                   |
-| `auth.account.deactivated`                                                | info       | `userId`, `revokedSessions`                                                   |
-| `auth.email.limited`                                                      | warn       | `kind`, `email` fingerprint                                                   |
-| `auth.email.<kind>.sent` / `auth.email.<kind>.failed`                     | info/error | kind: `verification`, `duplicate`, `reset`, `password_changed`, `deactivated` |
+| Event                                                                         | Level      | Fields                                                                                 |
+| ----------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------- |
+| `auth.register` / `auth.register.duplicate`                                   | info       | `userId` or `email` fingerprint                                                        |
+| `auth.login.succeeded`                                                        | info       | `userId`                                                                               |
+| `auth.login.failed`                                                           | warn       | `email` fingerprint (truncated SHA-256)                                                |
+| `auth.login.blocked`                                                          | info/warn  | `userId`, `reason` (`unverified`, `deactivated`)                                       |
+| `auth.logout`, `auth.session.revoked`, `auth.session.revoked_others`          | info       | `userId`, `revoked`                                                                    |
+| `auth.password.rehashed`                                                      | info       | `userId`                                                                               |
+| `admin.created`, `admin.promoted`                                             | info       | `userId`, `via: cli`                                                                   |
+| `auth.email.verified`                                                         | info       | `userId`                                                                               |
+| `auth.password.reset_requested` / `auth.password.reset_requested_unknown`     | info       | `userId` or `email` fingerprint                                                        |
+| `auth.password.reset`, `auth.password.changed`                                | info       | `userId`, `revokedSessions`                                                            |
+| `auth.account.deactivated`                                                    | info       | `userId`, `revokedSessions`                                                            |
+| `auth.email.limited`                                                          | warn       | `kind`, `email` fingerprint                                                            |
+| `auth.email.<kind>.sent` / `auth.email.<kind>.failed`                         | info/error | kind: `verification`, `duplicate`, `reset`, `password_changed`, `deactivated`, `mfa_*` |
+| `auth.mfa.setup_started`, `auth.mfa.enabled`, `auth.mfa.recovery_regenerated` | info       | `userId`                                                                               |
+| `auth.mfa.challenged`                                                         | info       | `userId` (password ok, second factor needed)                                           |
+| `auth.mfa.failed`                                                             | warn       | `userId`, `reason` (`wrong_code`, `replayed_code`, `wrong_recovery_code`, ...)         |
+| `auth.mfa.locked`                                                             | warn       | `userId` (account-wide wrong-code limit reached)                                       |
+| `auth.mfa.recovery_used`, `auth.mfa.disabled`                                 | warn       | `userId`, `remaining`                                                                  |
+| `auth.mfa.decrypt_failed`                                                     | error      | `userId` (wrong `MFA_ENCRYPTION_KEY` or tampered seed)                                 |
+| `admin.mfa_reset`                                                             | warn       | `userId`, `revokedSessions`, `via: cli`                                                |
 
 A spike in `auth.login.failed` across many fingerprints from few IPs suggests credential stuffing; the same fingerprint repeatedly suggests a targeted guess.
 
-Many `auth.email.limited` or `auth.password.reset_requested_unknown` events suggest someone probing addresses or trying to flood inboxes. Any `auth.email.*.failed` means SMTP (Mailpit locally, SES in AWS) is unreachable: users are not receiving their links.
+Many `auth.email.limited` or `auth.password.reset_requested_unknown` events suggest someone probing addresses or trying to flood inboxes. `auth.mfa.locked`, `auth.mfa.recovery_used` and `auth.mfa.disabled` on an admin account deserve a look every time; `auth.mfa.decrypt_failed` usually means the encryption key changed. Any `auth.email.*.failed` means SMTP (Mailpit locally, SES in AWS) is unreachable: users are not receiving their links.
 
 ## Health checks
 
