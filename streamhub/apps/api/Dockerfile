@@ -43,6 +43,16 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     API_HOST=0.0.0.0 \
     API_METRICS_HOST=0.0.0.0
+# Two things the base image does not do for us:
+# - Debian security updates: an image tag is rebuilt only every few weeks, so
+#   apply pending updates at build time (found by the CI image scan: zlib).
+# - Remove npm and npx: the app never runs them, and npm's bundled
+#   dependencies were the remaining scanner findings (brace-expansion, undici).
+#   Less software in the image is less to patch and less to exploit.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 WORKDIR /app
 # Manifests plus production node_modules for every workspace package that has
 # dependencies. pnpm's node_modules are symlinks into node_modules/.pnpm; COPY
