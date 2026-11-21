@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createMongoConnection } from '../../src/database/mongo.ts';
+import { createMongoConnection, whenConnected } from '../../src/database/mongo.ts';
 import { HealthService } from '../../src/modules/health/health.service.ts';
 import { silentLogger } from '../helpers.ts';
 import { testConfig } from './setup.ts';
@@ -45,5 +45,34 @@ describe('MongoDB connection (integration)', () => {
     const started = Date.now();
     await expect(bad.connect()).rejects.toThrow(/auth/i);
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it('whenConnected waits through failed attempts and resolves on the first success (never rejects)', async () => {
+    await mongo.disconnect();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const ready = whenConnected();
+      let settled = false;
+      void ready.then(() => (settled = true));
+      const unreachable = createMongoConnection(
+        {
+          ...config,
+          MONGO_URL: 'mongodb://nobody:nothing@127.0.0.1:1/x',
+          MONGO_SERVER_SELECTION_TIMEOUT_MS: 500,
+        },
+        silentLogger,
+      );
+      await expect(unreachable.connect()).rejects.toThrow();
+      await new Promise((r) => setTimeout(r, 100));
+      expect(settled).toBe(false);
+      await mongo.connect();
+      const client = await ready;
+      await expect(client.db().command({ ping: 1 })).resolves.toMatchObject({ ok: 1 });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });

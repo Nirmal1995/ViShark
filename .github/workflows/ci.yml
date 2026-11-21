@@ -1,0 +1,114 @@
+# Continuous integration for StreamHub.
+#
+# Runs on every pull request to main, and is reused by deploy-dev.yml on every
+# push to main (so main is checked with exactly the same steps). Each step
+# calls a script in streamhub/scripts/ci/, the same scripts a developer can run
+# locally: the workflow only orchestrates.
+#
+# CI jobs get a read-only token and no AWS access at all. Only the deploy job
+# in deploy-dev.yml can reach AWS.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      publish-image:
+        description: Save the tested image as an artifact for the deploy job
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to the same pull request cancels the run that is now outdated.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: streamhub
+
+jobs:
+  checks:
+    name: Quality, security and integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: gitleaks scans every commit, not just the last one.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          scanners: "true"
+
+      - name: Toolchain
+        run: bash scripts/ci/toolchain.sh
+
+      - name: Quality (typecheck, lint, format, unit tests)
+        run: bash scripts/ci/quality.sh
+
+      - name: Security scans (gitleaks, pnpm audit, Trivy)
+        run: bash scripts/ci/security-scan.sh
+
+      - name: Integration tests (MongoDB, Redis, storage, Mailpit)
+        run: bash scripts/ci/integration.sh
+
+      - name: Upload test and scan reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-checks
+          path: |
+            streamhub/**/reports/
+            streamhub/.logs/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  image:
+    name: API image (build, scan, smoke test)
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-toolchain
+        with:
+          scanners: "true"
+          install-dependencies: "false"
+
+      - name: Build, scan and smoke test
+        env:
+          IMAGE_ARCHIVE: ${{ inputs.publish-image && format('{0}/image/api.tar.gz', runner.temp) || '' }}
+        run: bash scripts/ci/image.sh
+
+      - name: Hand the tested image to the deploy job
+        if: inputs.publish-image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-image
+          path: ${{ runner.temp }}/image/
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-image
+          path: |
+            streamhub/reports/
+            streamhub/.logs/
+          retention-days: 14
+          if-no-files-found: ignore

@@ -1,9 +1,8 @@
 import type { Server } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
-import mongoose from 'mongoose';
 import { createApp } from './app.ts';
 import { ConfigError, loadConfig } from './config/env.ts';
-import { createMongoConnection } from './database/mongo.ts';
+import { createMongoConnection, whenConnected } from './database/mongo.ts';
 import { createLogger } from './infrastructure/logger.ts';
 import { createSmtpMailer } from './infrastructure/mailer.ts';
 import { createMetricsApp } from './infrastructure/metrics-server.ts';
@@ -48,8 +47,9 @@ function main(): void {
     logger,
     redis,
     mailer: createSmtpMailer(config),
-    // Resolves once the first MongoDB connection succeeds; the session store waits on it.
-    mongoClientPromise: mongoose.connection.asPromise().then((conn) => conn.getClient()),
+    // Resolves once the first MongoDB connection succeeds (never rejects);
+    // the session store waits on it.
+    mongoClientPromise: whenConnected(),
   });
 
   const app = createApp({ config, logger, health, metrics, auth, version: VERSION });

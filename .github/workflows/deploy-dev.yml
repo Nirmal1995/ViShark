@@ -1,0 +1,97 @@
+# Continuous delivery to the dev environment.
+#
+# Every push to main (a merged pull request) runs the full CI, then deploys
+# the exact image CI tested:
+#
+#   CI (checks, image) ──► deploy job
+#                            ├─ assumes an AWS IAM role through OIDC (no stored keys)
+#                            ├─ pushes the tested image to Amazon ECR
+#                            └─ starts a CodeDeploy deployment to the dev EC2 server,
+#                               which runs migrations, starts the new version,
+#                               checks /health/ready and rolls back if it fails
+#
+# Settings are GitHub repository variables (Settings > Secrets and variables >
+# Actions > Variables). None of them is secret, and no AWS key is stored in
+# GitHub. Setup: streamhub/docs/operations/cicd-github-actions.md.
+name: Deploy (dev)
+
+on:
+  push:
+    branches: [main]
+  # Redeploy main by hand (for example after recreating the server).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deployment at a time; a newer push waits instead of cancelling a
+  # deployment halfway through.
+  group: deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    with:
+      publish-image: true
+
+  deploy:
+    name: Deploy to dev
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      # Lets this job (and only this job) request a GitHub OIDC token, which
+      # AWS exchanges for short-lived credentials of the deploy role.
+      id-token: write
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
+      CODEDEPLOY_APPLICATION: ${{ vars.CODEDEPLOY_APPLICATION }}
+      CODEDEPLOY_GROUP: ${{ vars.CODEDEPLOY_GROUP }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: streamhub
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the tested image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-image
+          path: ${{ runner.temp }}/image
+
+      - name: Assume the deploy role (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: streamhub-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+          # Shorter than the 1 hour default: a deployment takes minutes.
+          role-duration-seconds: 1800
+
+      - name: Push the image to ECR
+        id: publish
+        run: bash scripts/cd/publish-image.sh "$RUNNER_TEMP/image/api.tar.gz"
+
+      - name: Deploy with CodeDeploy and wait for the health check
+        env:
+          IMAGE_URI: ${{ steps.publish.outputs.image-uri }}
+        run: bash scripts/cd/deploy-dev.sh
+
+      - name: Upload deployment logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deploy-logs
+          path: streamhub/.logs/
+          retention-days: 14
+          if-no-files-found: ignore

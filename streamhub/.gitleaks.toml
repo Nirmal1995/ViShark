@@ -1,0 +1,11 @@
+# gitleaks configuration (used by scripts/ci/security-scan.sh).
+# Default rules, plus one narrow allowlist. To accept a finding, add an entry
+# here with a reason; never weaken the scan in the pipeline script.
+title = "StreamHub gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fixed, non-secret values used only by tests, e.g. 'integration-test-session-secret-...'. The prefix makes them obvious in review; anything else in a test file is still reported."
+regexes = ['''^(integration|unit)-test-[a-z0-9-]+$''']

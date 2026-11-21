@@ -1,0 +1,5 @@
+# Trivy findings accepted on purpose. One ID per line, each with a comment:
+# why it does not apply or is accepted, who decided, and when to review it.
+# Example:
+#   # CVE-2026-00000: only reachable via feature X, which we do not use. Review 2027-01-31.
+#   CVE-2026-00000

@@ -1,0 +1,76 @@
+# The dev server's runtime: the API (image from ECR, pinned by digest),
+# Redis and Mailpit. MongoDB is MongoDB Atlas; nothing here listens on a
+# public interface: reach the API and Mailpit through SSM port forwarding.
+#
+# Started by hooks/application-start.sh as project "streamhub", with
+# release.env (API_IMAGE) for interpolation.
+name: streamhub
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  api:
+    image: ${API_IMAGE:?release.env must set API_IMAGE}
+    env_file:
+      - path: ./api.env # non-secret settings, versioned in git
+      - path: /etc/streamhub/secrets.env # secrets from SSM Parameter Store, incl. REDIS_URL
+    labels:
+      streamhub.commit: ${GIT_COMMIT:-unknown}
+    ports:
+      - '127.0.0.1:4000:4000'
+    depends_on:
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    restart: unless-stopped
+    logging: *logging
+
+  redis:
+    image: redis:8.4-alpine
+    command: ['redis-server', '/usr/local/etc/redis/redis.conf']
+    volumes:
+      - /etc/streamhub/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-data:/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'redis-cli -a "$$(sed -n "s/^requirepass //p" /usr/local/etc/redis/redis.conf)" --no-auth-warning ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 96m
+    restart: unless-stopped
+    logging: *logging
+
+  mailpit:
+    image: axllent/mailpit:v1.30.5
+    ports:
+      - '127.0.0.1:8025:8025'
+    environment:
+      MP_MAX_MESSAGES: '500'
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  redis-data:

@@ -22,6 +22,7 @@
     "dev:api": "pnpm --filter @streamhub/api dev",
     "admin:create": "pnpm --filter @streamhub/api admin:create",
     "admin:mfa-reset": "pnpm --filter @streamhub/api admin:mfa-reset",
+    "db:migrate": "pnpm --filter @streamhub/api db:migrate",
     "build": "pnpm -r --if-present build",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --if-present typecheck",
     "lint": "eslint .",
@@ -30,7 +31,10 @@
     "format:check": "prettier --check .",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm -r --if-present test:integration",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
+    "ci:toolchain": "bash scripts/ci/toolchain.sh",
+    "ci:security": "bash scripts/ci/security-scan.sh",
+    "ci:image": "bash scripts/ci/image.sh"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1164.0",

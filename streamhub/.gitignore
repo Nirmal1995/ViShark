@@ -18,7 +18,8 @@ coverage/
 # Local database snapshots (e.g. Redis started from the repo directory)
 dump.rdb
 
-# Test artifacts
+# Test and CI artifacts (JUnit, scanner reports)
+reports/
 playwright-report/
 test-results/
 

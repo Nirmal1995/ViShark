@@ -284,3 +284,81 @@ The user asked to continue while they set up Jenkins on their side; 3b-1 accepta
 | Recovery code works once; disable needs password and second factor      | pass             | pending                 |
 | `pnpm admin:mfa-reset` restores password-only sign-in                   | pass             | pending                 |
 | Seeds encrypted at rest; no seeds, codes or tokens in logs              | pass             | pending                 |
+
+## 2026-11-10: CI pipeline (Jenkins) and API container image
+
+The owner moved infrastructure ahead of the remaining application phases to practise Jenkins, AWS IAM and MongoDB administration (ADR-033). The owner builds AWS and Jenkins by hand from the runbook; the assistant writes code and documents only.
+
+### Completed
+
+- `Jenkinsfile` (Script Path `streamhub/Jenkinsfile`): Toolchain, Install, Quality, Security scans, Integration tests, API image; webhook trigger; JUnit results and reports archived; cleanup in `post`.
+- `scripts/ci/`: `versions.sh` (pinned tools), `toolchain.sh`, `quality.sh`, `security-scan.sh`, `integration.sh`, `image.sh`. `pnpm ci:toolchain`, `ci:security`, `ci:image`.
+- `.gitleaks.toml` (default rules plus one narrow allowlist for prefixed test values), `.trivyignore` (empty, with the rules for adding entries).
+- `apps/api/Dockerfile` (multi-stage, non-root, healthcheck) and `.dockerignore`.
+- Runbook `docs/operations/jenkins-on-ec2.md` (IAM role with Session Manager instead of SSH, IMDSv2, security group, pinned and checksum-verified installs, Jenkins hardening, fine-grained token, webhook with secret) and `docs/operations/ci-pipeline.md` (stages, design points, troubleshooting). ADR-033 to ADR-035.
+
+### Bug found: API crashed when started before MongoDB
+
+- Found by: reproducing the image's smoke test (start the container without a database; expect liveness 200 and readiness 503).
+- Symptom: the process exited with `unhandled promise rejection: MongoTopologyClosedError` a few seconds after start.
+- Root cause: the session store waited on `mongoose.connection.asPromise()`, which **rejects** when the first connection attempt fails. Nothing handled that rejection, so the process exited. Had it been handled, the store would have stayed broken after MongoDB came up. In ECS or Compose, where start order is not guaranteed, this is a crash loop.
+- Fix: `whenConnected()` in `database/mongo.ts` resolves on the first successful connection and never rejects. Integration test added (fails with the old code). Verified on the built server: started with MongoDB stopped (liveness 200, readiness 503, login 503), then MongoDB started (readiness 200, login 200 with a working session).
+- Also: deliberate 5xx `AppError`s (503 while a dependency is down) are now logged as warnings without a stack trace instead of "unhandled error".
+
+### Validation done in the assistant sandbox
+
+- The sandbox now runs Node 26.7.0 (from the `nodejs-wheel-binaries` PyPI package, sandbox only) instead of Node 22: `pnpm check` and all 91 integration tests pass on Node 26, matching the owner's machine. Earlier phases were validated on Node 22 in the sandbox and on Node 26 by the owner.
+- The sandbox cannot pull container images, so each Dockerfile stage was reproduced by hand (frozen install with filter, build, prod install, runtime layout): 52 MB application layer; the result starts in production mode, connects, answers login with Argon2, and passes the smoke checks.
+- gitleaks 8.30.1 (checksum verified) run on the owner's machine: git history clean with the allowlist; a planted AWS key and GitHub token in a test file are still reported.
+- CI scripts: shellcheck clean; control flow tested with stub `docker`, `gitleaks` and `trivy` commands (toolchain pass, scan pass and fail, integration cleanup on failure removes containers, volumes and `.env`, and the script refuses to run outside CI when a `.env` exists).
+- Not testable here: Trivy (its database host is blocked), a real `docker build`, Jenkins itself. These run for the first time on the CI host.
+- One `pnpm test:integration` run reported a failure without a failing test; five reruns passed. If it recurs in CI, the archived JUnit report and `.logs` will show it.
+
+### Acceptance criteria
+
+| Criterion                                                                  | Result (sandbox)  | Result (owner's Jenkins) |
+| -------------------------------------------------------------------------- | ----------------- | ------------------------ |
+| Toolchain stage passes on the EC2 host                                     | stub-tested       | pending                  |
+| Push to GitHub triggers a build through the webhook                        | n/a               | pending                  |
+| Quality, security scans and integration tests green; JUnit visible         | pass (Node 26)    | pending                  |
+| API image builds, runs as non-root, scans clean, smoke test passes         | layout reproduced | pending                  |
+| Nothing left behind after a build (containers, volumes, `.env`, workspace) | stub-tested       | pending                  |
+
+## 2026-11-17: CI/CD with GitHub Actions and a dev environment on AWS
+
+The owner changed the approach: a practice system built the way a company would, with a complete CI/CD pipeline (build, test **and** deploy) running while the product is developed. After comparing Jenkins on EC2, CodeBuild/CodePipeline and GitHub Actions on cost and learning value, the owner chose GitHub Actions with CodeDeploy to one EC2 dev server (ADR-036). AWS resources are created by the owner from the runbook; the assistant never connects to AWS or GitHub.
+
+### Completed
+
+- Repository root (`ViShark/`): `.github/workflows/ci.yml` (pull requests; reusable), `.github/workflows/deploy-dev.yml` (merge to main), `.github/actions/setup-toolchain` (Node, pinned pnpm, caches, scanners). Every third-party action pinned to a commit SHA (checkout v7.0.1, setup-node v7.1.0, cache v6.1.0, upload-artifact v7.0.2, download-artifact v8.0.2, configure-aws-credentials v6.3.0).
+- `scripts/ci/install-tools.sh` (gitleaks and Trivy, checksums from `versions.sh`); `image.sh` can hand the tested image to the deploy job and writes a job summary; Vitest annotates failing tests in pull requests.
+- `scripts/cd/publish-image.sh` (load the tested image, verify it belongs to this commit, push to ECR, output the digest; re-runs reuse the immutable tag) and `scripts/cd/deploy-dev.sh` (revision bundle pinned to the digest, S3 upload, CodeDeploy deployment, wait, print failed hooks).
+- `deploy/dev/`: `appspec.yml`, `compose.yaml` (API hardened: read-only root filesystem, no capabilities, no-new-privileges, memory limits; Redis; Mailpit; nothing on public interfaces), `api.env` (non-secret settings), hooks (`before-install`, `after-install`: secrets from SSM, image pull, migrations; `application-start`; `validate-service`: pinned image running and `/health/ready` = 200).
+- `apps/api/src/cli/migrate.ts` and `pnpm db:migrate` (ADR-038).
+- `infra/aws/`: IAM trust and permission policies for the three roles, ECR lifecycle policy, EC2 user data (Docker, pinned Compose plugin with checksum, swap).
+- Docs: `docs/operations/cicd-github-actions.md` (design, limits, cost, troubleshooting), `docs/operations/dev-environment-on-aws.md` (step-by-step runbook). ADR-034 marked superseded; ADR-036 to ADR-038.
+
+### Findings
+
+1. **Production would have run without indexes.** The API skips index creation in production (correctly), but nothing created them there: no unique email index, no TTL expiry for tokens. Fixed with the migrate step, run by every deployment before the new version starts. Verified: on an empty database in production mode it created all indexes (unique email, unique token hashes, TTL on `expiresAt`, session lookup) and a second run was a no-op; an unreachable database exits with code 1.
+2. **GitHub Free limits for private repositories** (checked in GitHub's documentation): no deployment environments and no enforced branch protection. The deploy role therefore trusts the `main` branch rather than an environment, and "CI green before merge" is a team rule. Making the repository public would lift both limits; that is the owner's decision.
+3. **Secrets location.** The first design wrote secrets to `/run` (tmpfs). Containers restart after a reboot without a deployment, and Redis would then miss its config file. Moved to `/etc/streamhub` (root only, encrypted EBS) and documented the trade-off (ADR-037).
+4. **Executable bit.** The repository lives on a Windows drive with `core.filemode=false`, so hook scripts may arrive in GitHub without the executable bit, and CodeDeploy runs hooks directly. `deploy-dev.sh` sets it when building the bundle.
+
+### Validation done in the assistant sandbox
+
+- `pnpm check` (156 unit tests) and 91 integration tests pass on Node 26; the Vitest GitHub reporter is accepted.
+- actionlint 1.7.12 (checksum verified, run on the owner's machine): both workflows and the composite action are clean. Docker Compose 5.6.1 (checksum verified) parses `deploy/dev/compose.yaml`; single-quoted secret values stay literal.
+- shellcheck: all new scripts clean. IAM and lifecycle JSON files parse.
+- Deploy scripts and all four CodeDeploy hooks run against stub `aws`, `docker` and `curl` commands: happy path; missing SSM parameter; image not pinned by digest; wrong image running; health check retries; deployment failure prints the failed hook and its log; re-run of a commit reuses the existing ECR tag; an archive from another commit is refused. Secrets file mode 600 and Redis config owned by uid 999, mode 400.
+- Not testable here: GitHub Actions itself, AWS (OIDC, ECR, CodeDeploy, SSM), a real `docker build`, and the API container with a read-only root filesystem. The first real run is the owner's. If the read-only filesystem breaks the API, `validate-service` fails and CodeDeploy rolls back, which is also the intended safety net.
+
+### Acceptance criteria
+
+| Criterion                                                                    | Result (sandbox) | Result (owner) |
+| ---------------------------------------------------------------------------- | ---------------- | -------------- |
+| A pull request runs CI (checks and image) and shows test annotations         | lint and stubs   | pending        |
+| A merge to main deploys the tested image by digest, using OIDC (no keys)     | stub-tested      | pending        |
+| The dev server runs the API with secrets from SSM; `/health/ready` is 200    | stub-tested      | pending        |
+| A failing deployment rolls back and the old version keeps serving            | stub-tested      | pending        |
+| No inbound ports; API and Mailpit reachable only through SSM port forwarding | by design        | pending        |

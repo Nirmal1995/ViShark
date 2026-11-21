@@ -262,3 +262,56 @@ Status: Accepted (Phase 3b-2)
 - Context: a TOTP seed is a long-lived secret; anyone with it can generate valid codes forever. Database dumps and backups are the usual way such data leaks.
 - Decision: `MFA_ENCRYPTION_KEY` (environment only; AWS Secrets Manager in production) feeds HKDF-SHA256 to derive one AES-256-GCM key for seeds and one HMAC key for recovery codes. Random 12-byte IV per value, 16-byte tag enforced, the user ID as authenticated data, stored as `v1.<iv>.<tag>.<ciphertext>`. A value that does not decrypt is logged and treated as a wrong code, never a 500.
 - Consequences: a database dump alone yields neither usable seeds nor crackable recovery codes. Losing the key disables every enrolled authenticator (recovery: `admin:mfa-reset`). Key rotation is possible via the version prefix but not built yet.
+
+## ADR-033: Infrastructure and CI move ahead of the remaining application phases
+
+Status: Accepted (2026-11-10, decided by the project owner)
+
+- Context: the original plan forbade CI/CD pipelines and any AWS work during development. The owner wants to practise Jenkins, AWS IAM and MongoDB administration for interviews now, building the infrastructure by hand, then deploy the application onto it later.
+- Decision: the rule is amended. The assistant writes the Jenkinsfile, CI scripts, Dockerfiles and runbooks. The owner creates and operates all AWS resources and Jenkins, by hand. The assistant still never connects to AWS or Jenkins, never uses or stores credentials, and never pushes to GitHub. Terraform that provisions resources stays out of scope unless the owner asks for it.
+- Consequences: Phase 8/9 items (the API Dockerfile, security scans) arrive early. Application phases 4 to 7 continue afterwards.
+
+## ADR-034: Jenkins pipeline: thin Jenkinsfile, scripts in the repository, pinned scanners
+
+Status: Superseded by ADR-036 for the active pipeline (2026-11-17). The scripts and pinning rules still apply; the Jenkinsfile stays as an alternative.
+
+- Context: CI logic hidden in Groovy is hard to test and review; CI hosts hold credentials, so the tools that run there are a supply-chain target (Trivy's release channel and GitHub Action tags were hijacked in March 2026 to steal CI secrets).
+- Decision: the Jenkinsfile orchestrates only; each stage is a script in `scripts/ci/` that also runs locally. One EC2 instance runs controller and builds, one build at a time. Stages run cheapest first: toolchain, install (frozen lockfile), quality, security scans (gitleaks on full history, pnpm audit, Trivy), integration tests on a throwaway Compose stack, image build with scan and smoke test. Tool versions are pinned in `scripts/ci/versions.sh`, adopted after a cooldown of at least a week, installed with checksum verification, and checked by the first stage. Webhook trigger with an HMAC secret.
+- Consequences: builds run as a user in the `docker` group, which is root-equivalent on the host: acceptable for a single-owner lab, not for production (isolated agents). Webhooks are plain HTTP until TLS is added.
+
+## ADR-035: API container image: workspace layout, TypeScript workspace packages, non-root
+
+Status: Accepted (2026-11-10)
+
+- Context: the API depends on workspace packages (`@streamhub/contracts`, `@streamhub/shared`) published as TypeScript source. `pnpm deploy` would copy them into `node_modules`, where Node refuses to strip types.
+- Decision: multi-stage build (build, prod-deps, runtime) that keeps the monorepo layout: production `node_modules` from `pnpm install --prod --filter @streamhub/api...`, compiled `dist/` for the API, and the workspace packages' `src/` outside `node_modules`, run by Node's built-in type stripping. Files owned by root, process runs as the image's `node` user (uid 1000). Liveness healthcheck with Node's `fetch` (no curl in the image). Base image tag passed as a build argument so CI can pin a digest.
+- Consequences: no separate build step for the shared packages. Verified by reproducing each stage by hand in the sandbox on Node 26 (the sandbox cannot pull images); the first real `docker build` runs on the CI host.
+
+## ADR-036: GitHub Actions for CI/CD, CodeDeploy to a single EC2 dev server
+
+Status: Accepted (2026-11-17, decided by the project owner)
+
+- Context: the owner wants a complete CI/CD practice (build, test, deploy) while the product is developed, at minimum cost and with real AWS design work (IAM, deployment). A self-hosted Jenkins needs an always-available server of about 4 GB; CodeBuild/CodePipeline bills per build minute. The project is a practice system with no users.
+- Decision:
+  - CI and CD on GitHub-hosted runners (free minutes). Workflows only orchestrate the existing `scripts/ci` and new `scripts/cd` scripts.
+  - Pull requests run CI; a merge to `main` runs CI again and deploys the image CI tested, by digest.
+  - The deploy job assumes `streamhub-github-deploy` through GitHub OIDC, trusted only for `main` of `Nirmal1995/ViShark`. No AWS keys anywhere. CI jobs have no AWS access.
+  - Target: one t3.micro (Amazon Linux 2023) running the API, Redis and Mailpit with Docker Compose, deployed in place by CodeDeploy with lifecycle hooks, health validation and automatic rollback. MongoDB Atlas M0. No inbound ports; access through Systems Manager.
+  - Every third-party action pinned to a commit SHA.
+- Consequences: about $10 to $14 a month for the server if never stopped, the pipeline itself is free. A few seconds of downtime per deployment. GitHub Free on a private repository has no branch protection or deployment environments: "CI green before merge" is a team rule, and the role trusts the branch instead of an environment. Moving to ECS Fargate behind a load balancer is a later, separate exercise.
+
+## ADR-037: Non-secret config in git, secrets in SSM Parameter Store
+
+Status: Accepted (2026-11-17)
+
+- Context: the dev server needs a database URL, session and MFA keys and a Redis password. They must not live in git, GitHub, the revision bundle or the image.
+- Decision: non-secret settings in `deploy/dev/api.env`, reviewed and deployed like code. Secrets as SecureString parameters under `/streamhub/dev/`, read by the server's instance role at deploy time and written to `/etc/streamhub` (root only, mode 600, encrypted EBS). Redis reads its password from a config file, never from its command line. Containers cannot reach the instance role (IMDSv2 hop limit 1).
+- Consequences: rotating a secret is "update the parameter, redeploy". Root on the server can read the secrets (unavoidable on a single host). Not tmpfs, because containers restart after a reboot without a deployment. Secrets Manager (rotation, cost per secret) is the upgrade path.
+
+## ADR-038: Database migrations are a deployment step
+
+Status: Accepted (2026-11-17)
+
+- Context: in production the API does not build indexes at start-up (index builds can lock large collections), but `indexes.ts` had no production entry point: a production deployment would have run without the unique email index and the TTL indexes.
+- Decision: `apps/api/src/cli/migrate.js` (`pnpm db:migrate` locally) creates every index; it is idempotent. The CodeDeploy `after-install` hook runs it with the new image before the new version starts.
+- Consequences: a failed migration stops the deployment with the old version still serving. Because the old version runs against the migrated database for a moment, migrations must be backward compatible (expand first, contract in a later release).

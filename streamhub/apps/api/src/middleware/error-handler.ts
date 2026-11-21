@@ -43,8 +43,12 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, next) 
     message = 'Unsupported charset';
   }
 
-  if (status >= 500) {
+  if (status >= 500 && !(err instanceof AppError)) {
     req.log.error({ err }, 'unhandled error');
+  } else if (status >= 500) {
+    // Deliberate 5xx (for example 503 while a dependency is down): the cause
+    // is logged where it happens, so no stack trace here.
+    req.log.warn({ code, status }, message);
   } else {
     req.log.warn({ code, status }, message);
   }

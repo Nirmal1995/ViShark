@@ -1,0 +1,93 @@
+// StreamHub CI pipeline (Jenkins declarative pipeline).
+//
+// The repository root is E:\Jenkins\ViShark; the application lives in
+// streamhub/, so the job's "Script Path" is streamhub/Jenkinsfile and every
+// stage runs inside dir('streamhub').
+//
+// The Jenkinsfile only orchestrates. Each stage calls a script in
+// scripts/ci/, so the same checks run on a laptop (bash scripts/ci/...) and
+// in Jenkins, and the logic is reviewed like any other code.
+//
+// Host setup (Node, pnpm, Docker, scanners, plugins, webhook):
+// docs/operations/jenkins-on-ec2.md. What each stage does and how to fix it
+// when it fails: docs/operations/ci-pipeline.md.
+pipeline {
+  agent any
+
+  options {
+    // Integration tests bind fixed local ports; two builds at once would collide.
+    disableConcurrentBuilds()
+    timeout(time: 45, unit: 'MINUTES')
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
+  }
+
+  // Builds start from the GitHub webhook (push events).
+  triggers {
+    githubPush()
+  }
+
+  environment {
+    CI = 'true'
+    APP_DIR = 'streamhub'
+    COMPOSE_PROJECT_NAME = 'streamhub-ci'
+    // Trivy's vulnerability database, kept between builds (downloaded once a day).
+    TRIVY_CACHE_DIR = "${env.JENKINS_HOME}/.cache/trivy"
+  }
+
+  stages {
+    stage('Toolchain') {
+      steps {
+        dir(env.APP_DIR) { sh 'bash scripts/ci/toolchain.sh' }
+      }
+    }
+
+    stage('Install') {
+      steps {
+        // --frozen-lockfile: the lockfile is the source of truth; CI never
+        // resolves new versions. Install scripts run only for packages
+        // approved in pnpm-workspace.yaml (allowBuilds).
+        dir(env.APP_DIR) { sh 'pnpm install --frozen-lockfile' }
+      }
+    }
+
+    stage('Quality') {
+      steps {
+        dir(env.APP_DIR) { sh 'bash scripts/ci/quality.sh' }
+      }
+    }
+
+    stage('Security scans') {
+      steps {
+        dir(env.APP_DIR) { sh 'bash scripts/ci/security-scan.sh' }
+      }
+    }
+
+    stage('Integration tests') {
+      steps {
+        dir(env.APP_DIR) { sh 'bash scripts/ci/integration.sh' }
+      }
+    }
+
+    stage('API image') {
+      steps {
+        dir(env.APP_DIR) { sh 'bash scripts/ci/image.sh' }
+      }
+    }
+  }
+
+  post {
+    always {
+      junit allowEmptyResults: true, testResults: 'streamhub/**/reports/junit-*.xml'
+      archiveArtifacts allowEmptyArchive: true, artifacts: 'streamhub/reports/**, streamhub/.logs/**'
+      // Safety net if a stage was aborted before its own cleanup ran.
+      dir(env.APP_DIR) {
+        sh 'docker compose down --volumes --remove-orphans --timeout 10 || true; rm -f .env'
+      }
+    }
+    cleanup {
+      // Nothing from one build leaks into the next (no stale .env or reports).
+      deleteDir()
+    }
+  }
+}

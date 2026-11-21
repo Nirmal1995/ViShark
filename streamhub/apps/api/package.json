@@ -12,7 +12,8 @@
     "test:integration": "vitest run --project integration",
     "start": "node --env-file-if-exists=../../.env dist/server.js",
     "admin:create": "tsx --env-file-if-exists=../../.env src/cli/create-admin.ts",
-    "admin:mfa-reset": "tsx --env-file-if-exists=../../.env src/cli/reset-mfa.ts"
+    "admin:mfa-reset": "tsx --env-file-if-exists=../../.env src/cli/reset-mfa.ts",
+    "db:migrate": "tsx --env-file-if-exists=../../.env src/cli/migrate.ts"
   },
   "dependencies": {
     "@streamhub/contracts": "workspace:*",

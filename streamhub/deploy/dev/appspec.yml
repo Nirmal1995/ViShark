@@ -1,0 +1,30 @@
+# CodeDeploy revision for the dev server (EC2, in-place deployment).
+#
+# Order on the server: ApplicationStop (of the PREVIOUS revision) ->
+# BeforeInstall -> files copied -> AfterInstall -> ApplicationStart ->
+# ValidateService. Everything that can fail (fetching secrets, pulling the
+# image, migrations) happens before the running version is replaced, so a
+# failed deployment leaves the old version serving.
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /opt/streamhub/release
+file_exists_behavior: OVERWRITE
+hooks:
+  BeforeInstall:
+    - location: hooks/before-install.sh
+      timeout: 60
+      runas: root
+  AfterInstall:
+    - location: hooks/after-install.sh
+      timeout: 600
+      runas: root
+  ApplicationStart:
+    - location: hooks/application-start.sh
+      timeout: 180
+      runas: root
+  ValidateService:
+    - location: hooks/validate-service.sh
+      timeout: 180
+      runas: root

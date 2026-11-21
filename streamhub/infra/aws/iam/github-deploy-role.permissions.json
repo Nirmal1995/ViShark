@@ -1,0 +1,54 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EcrLogin",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "PushApiImageOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage",
+        "ecr:BatchGetImage",
+        "ecr:DescribeImages"
+      ],
+      "Resource": "arn:aws:ecr:eu-west-1:<ACCOUNT_ID>:repository/streamhub-api"
+    },
+    {
+      "Sid": "UploadDevRevisions",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::streamhub-dev-deploy-<ACCOUNT_ID>/streamhub-dev/*"
+    },
+    {
+      "Sid": "DeployToDevGroupOnly",
+      "Effect": "Allow",
+      "Action": [
+        "codedeploy:CreateDeployment",
+        "codedeploy:GetDeployment",
+        "codedeploy:ListDeploymentInstances",
+        "codedeploy:GetDeploymentInstance"
+      ],
+      "Resource": "arn:aws:codedeploy:eu-west-1:<ACCOUNT_ID>:deploymentgroup:streamhub/streamhub-dev"
+    },
+    {
+      "Sid": "ReadDeploymentConfig",
+      "Effect": "Allow",
+      "Action": "codedeploy:GetDeploymentConfig",
+      "Resource": "arn:aws:codedeploy:eu-west-1:<ACCOUNT_ID>:deploymentconfig:CodeDeployDefault.AllAtOnce"
+    },
+    {
+      "Sid": "RegisterRevision",
+      "Effect": "Allow",
+      "Action": ["codedeploy:RegisterApplicationRevision", "codedeploy:GetApplicationRevision"],
+      "Resource": "arn:aws:codedeploy:eu-west-1:<ACCOUNT_ID>:application:streamhub"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+# Shared setup for every StreamHub CI job: Node (from streamhub/.nvmrc), the
+# pinned pnpm, the dependency store cache and, optionally, the pinned and
+# checksum-verified security scanners. A local action, so no third-party code
+# runs here beyond the pinned GitHub actions it calls.
+name: Set up StreamHub toolchain
+description: Node, pnpm, dependency cache and (optionally) gitleaks and Trivy
+inputs:
+  scanners:
+    description: Install gitleaks and Trivy
+    default: "false"
+  install-dependencies:
+    description: Run pnpm install --frozen-lockfile
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: streamhub/.nvmrc
+
+    - name: Install pnpm
+      shell: bash
+      working-directory: streamhub
+      run: |
+        source scripts/ci/versions.sh
+        npm install --global "pnpm@${CI_PNPM_VERSION}"
+        echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+    - name: Cache pnpm store
+      if: inputs.install-dependencies == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.PNPM_STORE }}
+        key: pnpm-${{ runner.os }}-${{ hashFiles('streamhub/pnpm-lock.yaml') }}
+        restore-keys: pnpm-${{ runner.os }}-
+
+    - name: Install dependencies
+      if: inputs.install-dependencies == 'true'
+      shell: bash
+      working-directory: streamhub
+      # --frozen-lockfile: the lockfile is the source of truth; CI never
+      # resolves new versions. Install scripts run only for packages approved
+      # in pnpm-workspace.yaml (allowBuilds).
+      run: pnpm install --frozen-lockfile
+
+    - name: Install gitleaks and Trivy (checksum verified)
+      if: inputs.scanners == 'true'
+      shell: bash
+      working-directory: streamhub
+      run: |
+        bash scripts/ci/install-tools.sh "$RUNNER_TEMP/bin"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+    - name: Day stamp for the Trivy database cache
+      if: inputs.scanners == 'true'
+      id: day
+      shell: bash
+      run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Trivy vulnerability database (refreshed daily)
+      if: inputs.scanners == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/trivy
+        key: trivy-db-${{ steps.day.outputs.stamp }}
+        restore-keys: trivy-db-

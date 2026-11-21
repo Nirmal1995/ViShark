@@ -103,6 +103,9 @@ docs/            architecture, operations, security, database, aws, testing
 - [Observability](docs/operations/observability.md)
 - [Authentication design](docs/security/authentication-design.md)
 - [Database collections](docs/database/collections.md)
+- [CI/CD: GitHub Actions to the dev environment](docs/operations/cicd-github-actions.md)
+- [Runbook: dev environment and deploy pipeline on AWS](docs/operations/dev-environment-on-aws.md)
+- [CI stages explained](docs/operations/ci-pipeline.md) and the alternative [Jenkins on EC2](docs/operations/jenkins-on-ec2.md) setup
 
 ## Security notes
 

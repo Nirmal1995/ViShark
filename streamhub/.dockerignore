@@ -1,0 +1,21 @@
+# Keep the build context small and secret-free. Docker only sees what is not
+# listed here; anything matching never reaches the daemon.
+**/node_modules
+**/dist
+**/coverage
+**/reports
+.logs
+.git
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+dump.rdb
+samples
+**/*.mp4
+docs
+**/tests
+**/*.test.ts
+deploy
+infra

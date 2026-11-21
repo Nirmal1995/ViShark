@@ -1,3 +1,4 @@
+import type { MongoClient } from 'mongodb';
 import mongoose from 'mongoose';
 import type { Logger } from 'pino';
 import type { AppConfig } from '../config/env.ts';
@@ -50,4 +51,24 @@ export function createMongoConnection(
       await db.command({ ping: 1 });
     },
   };
+}
+
+/**
+ * Resolves with the driver client once the first connection succeeds, however
+ * many attempts that takes. It never rejects.
+ *
+ * Do not use mongoose.connection.asPromise() for this: it rejects when the
+ * first attempt fails, so an API container that starts before its database
+ * crashed with an unhandled rejection (and a session store waiting on it would
+ * stay broken even after the database came up). Found by the CI image smoke
+ * test, which starts the container without a database.
+ */
+export function whenConnected(): Promise<MongoClient> {
+  const conn = mongoose.connection;
+  if (conn.readyState === mongoose.ConnectionStates.connected) {
+    return Promise.resolve(conn.getClient());
+  }
+  return new Promise((resolve) => {
+    conn.once('connected', () => resolve(conn.getClient()));
+  });
 }
