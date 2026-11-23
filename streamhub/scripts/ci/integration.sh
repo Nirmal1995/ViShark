@@ -33,7 +33,7 @@ rm -f .env
 bash scripts/init-env.sh
 wait_for_docker 60
 info "starting services (project $COMPOSE_PROJECT_NAME)"
-docker compose up -d --wait --wait-timeout 240
+start_infrastructure 240
 
 info "integration tests"
 pnpm -r test:integration --reporter=default "${gh_reporter[@]}" --reporter=junit \

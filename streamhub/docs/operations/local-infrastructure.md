@@ -26,7 +26,7 @@ pnpm infra:up
        └─ mailpit    healthy when `mailpit readyz` succeeds
 ```
 
-`--wait` makes the command fail if any service does not become healthy within 240 seconds, or if `storage-init` exits non-zero.
+`pnpm infra:up` starts the four long-running services with `docker compose up --wait` (fails if any is not healthy within 240 seconds), then runs `storage-init` to completion with `docker compose run` (fails if it exits non-zero). The job is kept out of `up --wait` on purpose: Compose counts any container that exits during the wait as a failure, even with exit code 0, which made start-up pass or fail depending on timing.
 
 ## Credentials model
 

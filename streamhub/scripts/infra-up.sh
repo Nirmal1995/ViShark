@@ -7,8 +7,8 @@ load_env
 wait_for_docker
 
 info "starting MongoDB, Redis, storage, Mailpit"
-# --wait blocks until healthchecks pass (and storage-init exits successfully).
-if ! docker compose up -d --wait --wait-timeout 240; then
+# Waits until healthchecks pass, then runs storage-init to completion.
+if ! start_infrastructure 240; then
   fail "one or more services did not become healthy"
   docker compose ps -a
   info "inspect with: pnpm infra:logs <service>"

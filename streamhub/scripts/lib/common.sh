@@ -59,3 +59,17 @@ wait_for_docker() {
     waited=$((waited + 3))
   done
 }
+
+# Starts the local/CI infrastructure and runs the one-shot storage setup.
+#
+# Two steps on purpose: `docker compose up --wait` treats ANY container that
+# exits while it waits as a failure, even with exit code 0. storage-init is a
+# job that is meant to exit, so including it made `up --wait` pass or fail
+# depending on timing (found in CI: "container storage-init exited (0)").
+# Long-running services are waited for; the job is run to completion and its
+# exit code is checked.
+start_infrastructure() {
+  local timeout="${1:-240}"
+  docker compose up -d --wait --wait-timeout "$timeout" mongo redis storage mailpit || return 1
+  docker compose run --rm --no-deps -T storage-init || return 1
+}
