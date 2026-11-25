@@ -362,3 +362,37 @@ The owner changed the approach: a practice system built the way a company would,
 | The dev server runs the API with secrets from SSM; `/health/ready` is 200    | stub-tested      | pending        |
 | A failing deployment rolls back and the old version keeps serving            | stub-tested      | pending        |
 | No inbound ports; API and Mailpit reachable only through SSM port forwarding | by design        | pending        |
+
+## 2026-11-21: Phase 4a, categories, video records and the audit log
+
+Phase 4 split into 4a (metadata, lifecycle, catalogue, audit) and 4b (storage abstraction and the pre-signed multipart upload workflow).
+
+### Completed
+
+- `packages/shared/src/video-status.ts`: processing and publication state machines with tests. `@streamhub/contracts` now depends on `@streamhub/shared`.
+- `packages/contracts/src/catalog.ts`: ids, bounded pagination (page size at most 50, page at most 200), category, video, catalogue, management and audit-log request schemas; response DTO schemas for the docs.
+- Categories: list (any signed-in user, at most 200), create, rename, delete (admins); unique slug; deletion refused while videos use the category.
+- Videos: create (draft, processing INITIATED), edit (explicit field list), publish, unpublish, archive, restore (atomic, state machine enforced), soft delete; catalogue `GET /videos` (published, ready, public; category filter; text search; pagination); `GET /videos/:id`; management list `GET /admin/videos`.
+- Audit log: `auditLogs` collection, `audit()` for API changes, `auditCli()` for the admin CLI (`admin.created`, `admin.promoted`, `admin.mfa_reset`), `GET /admin/audit-logs`.
+- New collections' indexes added to the migration step. OpenAPI: all new endpoints with query parameters generated from the request schemas.
+- Docs: collections (categories, videos, auditLogs), error codes, events; ADR-039 to ADR-042.
+
+### Errors encountered
+
+1. Four integration tests failed with 500 as soon as a video had a category. The category lookup used `{ _id: { $in: ids } }`, which the global `sanitizeFilter` setting neutralises (it treats every operator as untrusted input). Fixed with `mongoose.trusted()`. This is exactly the class of bug the 3b-1 parity fix was for: the tests run with the production Mongoose settings, so it failed here instead of in the dev environment.
+2. TypeScript rejected the shared filter objects (string literals widened to `string`); fixed with `as const`.
+
+### Validation done in the assistant sandbox
+
+- `pnpm check`: 124 API unit tests, 23 shared, 22 contracts. Integration: 115 (24 new for categories, videos, catalogue and audit).
+- Sabotage check, 12 controls disabled one at a time: 11 caught (publish without READY, unpublish/restore from the wrong state, unlisted videos in the catalogue, drafts visible to viewers, deleted videos in the management list, processing jumps, viewers managing categories, deleting a category in use, missing audit record, storage key in responses, unbounded page size). The one that survived: removing the explicit field list in `updateVideo` is invisible through HTTP, because the strict request schema already rejects unknown fields. Kept on purpose as a second layer.
+
+### Acceptance criteria
+
+| Criterion                                                                   | Result (sandbox) | Result (owner) |
+| --------------------------------------------------------------------------- | ---------------- | -------------- |
+| Admin creates categories and draft videos; viewers cannot                   | pass             | pending        |
+| Publishing requires processing READY; invalid transitions return 409        | pass             | pending        |
+| Catalogue shows only published, ready, public videos; pagination is bounded | pass             | pending        |
+| Every privileged change appears in `GET /admin/audit-logs`                  | pass             | pending        |
+| CI green on the pull request                                                | n/a              | pending        |

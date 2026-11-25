@@ -9,6 +9,7 @@ import { createMetricsApp } from './infrastructure/metrics-server.ts';
 import { createMetrics } from './infrastructure/metrics.ts';
 import { createRedis, pingRedis } from './infrastructure/redis.ts';
 import { createAuthModule } from './modules/auth/index.ts';
+import { catalogRoutes } from './modules/catalog.ts';
 import { ensureIndexes } from './database/indexes.ts';
 import { HealthService } from './modules/health/health.service.ts';
 
@@ -51,6 +52,7 @@ function main(): void {
     // the session store waits on it.
     mongoClientPromise: whenConnected(),
   });
+  auth.routes.push(...catalogRoutes());
 
   const app = createApp({ config, logger, health, metrics, auth, version: VERSION });
 

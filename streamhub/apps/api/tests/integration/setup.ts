@@ -10,6 +10,7 @@ import { createApp } from '../../src/app.ts';
 import { loadConfig, type AppConfig } from '../../src/config/env.ts';
 import { createMemoryMailer, type Mailer } from '../../src/infrastructure/mailer.ts';
 import { createRedis } from '../../src/infrastructure/redis.ts';
+import { catalogRoutes } from '../../src/modules/catalog.ts';
 import { createAuthModule } from '../../src/modules/auth/index.ts';
 import { createPasswordHasher } from '../../src/modules/auth/password.ts';
 import type { SessionPolicy } from '../../src/modules/auth/session.ts';
@@ -114,7 +115,7 @@ export function buildAuthApp(options: {
     ...(options.policy ? { policy: options.policy } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
-  auth.routes.push(...(options.extraRoutes ?? []));
+  auth.routes.push(...catalogRoutes(), ...(options.extraRoutes ?? []));
   return createApp({
     config: { ...config, API_DOCS_ENABLED: false },
     logger: silentLogger,

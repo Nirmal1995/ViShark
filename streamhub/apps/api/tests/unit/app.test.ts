@@ -110,6 +110,21 @@ describe('versioned API and docs', () => {
     ]) {
       expect(doc.paths).toHaveProperty([`/api/v1/auth/${path}`]);
     }
+    for (const path of [
+      '/api/v1/categories',
+      '/api/v1/categories/{id}',
+      '/api/v1/videos',
+      '/api/v1/videos/{id}',
+      '/api/v1/videos/{id}/publish',
+      '/api/v1/admin/videos',
+      '/api/v1/admin/audit-logs',
+    ]) {
+      expect(doc.paths).toHaveProperty([path]);
+    }
+    const catalogueParams = doc.paths['/api/v1/videos'].get.parameters.map(
+      (p: { name: string }) => p.name,
+    );
+    expect(catalogueParams.sort()).toEqual(['categoryId', 'page', 'pageSize', 'q']);
     expect(doc.paths).toHaveProperty(['/api/v1/users/me/deactivate']);
     expect(doc.components.schemas.LoginBody.properties.email.example).toBe('you@example.com');
     expect(doc.components.responses.E401.content['application/json'].example.error.code).toBe(

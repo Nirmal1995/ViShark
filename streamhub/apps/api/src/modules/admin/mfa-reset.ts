@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import { emailSchema } from '@streamhub/contracts';
 import type { Logger } from 'pino';
+import { auditCli } from '../audit/audit.service.ts';
 import { clearMfa } from '../auth/mfa.service.ts';
 import { revokeAllSessions } from '../auth/sessions.service.ts';
 import { UserModel } from '../users/user.model.ts';
@@ -43,5 +44,11 @@ export async function resetMfa(email: string, deps: { logger: Logger }): Promise
     { event: 'admin.mfa_reset', userId, revokedSessions, via: 'cli' },
     'two-factor authentication removed by operator',
   );
+  await auditCli({
+    action: 'admin.mfa_reset',
+    targetType: 'user',
+    targetId: user._id,
+    details: { revokedSessions },
+  });
   return 'reset';
 }
