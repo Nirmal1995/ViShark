@@ -1,6 +1,9 @@
 import { ensureSessionIndexes } from '../modules/auth/sessions.service.ts';
 import { EmailVerificationTokenModel, PasswordResetTokenModel } from '../modules/auth/tokens.ts';
+import { AuditLogModel } from '../modules/audit/audit.model.ts';
+import { CategoryModel } from '../modules/categories/category.model.ts';
 import { UserModel } from '../modules/users/user.model.ts';
+import { VideoModel } from '../modules/videos/video.model.ts';
 
 /**
  * Creates every index the application relies on (unique email, TTL indexes
@@ -13,5 +16,8 @@ export async function ensureIndexes(): Promise<void> {
     EmailVerificationTokenModel.createIndexes(),
     PasswordResetTokenModel.createIndexes(),
     ensureSessionIndexes(),
+    CategoryModel.createIndexes(),
+    VideoModel.createIndexes(),
+    AuditLogModel.createIndexes(),
   ]);
 }

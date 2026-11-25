@@ -1,3 +1,4 @@
+import { auditCli } from '../audit/audit.service.ts';
 import { parseArgs } from 'node:util';
 import { displayNameSchema, emailSchema, passwordSchema } from '@streamhub/contracts';
 import type { Logger } from 'pino';
@@ -76,6 +77,7 @@ export async function createAdmin(
       { event: 'admin.promoted', userId: existing._id.toString(), via: 'cli' },
       'user promoted to admin',
     );
+    await auditCli({ action: 'admin.promoted', targetType: 'user', targetId: existing._id });
     return 'promoted';
   }
 
@@ -104,5 +106,6 @@ export async function createAdmin(
     { event: 'admin.created', userId: user._id.toString(), via: 'cli' },
     'administrator created',
   );
+  await auditCli({ action: 'admin.created', targetType: 'user', targetId: user._id });
   return 'created';
 }

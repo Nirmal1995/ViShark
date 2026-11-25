@@ -315,3 +315,43 @@ Status: Accepted (2026-11-17)
 - Context: in production the API does not build indexes at start-up (index builds can lock large collections), but `indexes.ts` had no production entry point: a production deployment would have run without the unique email index and the TTL indexes.
 - Decision: `apps/api/src/cli/migrate.js` (`pnpm db:migrate` locally) creates every index; it is idempotent. The CodeDeploy `after-install` hook runs it with the new image before the new version starts.
 - Consequences: a failed migration stops the deployment with the old version still serving. Because the old version runs against the migrated database for a moment, migrations must be backward compatible (expand first, contract in a later release).
+
+## ADR-039: Video lifecycle as two shared state machines, applied atomically
+
+Status: Accepted (Phase 4a)
+
+- Context: a video goes through upload and processing (owned by the system) and publication (owned by administrators). Invalid jumps (publishing an unprocessed video, "completing" an aborted upload) and races (two admins, a retry, a stale page) must be impossible, not merely unlikely.
+- Decision: two state machines in `packages/shared/src/video-status.ts` (processing: INITIATED, UPLOADING, VERIFYING, PROCESSING, READY, FAILED, ABORTED; publication: DRAFT, PUBLISHED, ARCHIVED, with publishing requiring READY). Every change is one `findOneAndUpdate` whose filter includes the allowed previous states, so the database decides; a miss is answered with `409 INVALID_TRANSITION` and the current statuses. Visibility (PUBLIC or UNLISTED) is a separate field, not a state.
+- Consequences: the web app can use the same rules to show only valid actions. Adding a state means editing one table and its tests. Concurrency is safe without locks or transactions.
+
+## ADR-040: Soft delete for videos; viewers get 404 for anything they may not watch
+
+Status: Accepted (Phase 4a)
+
+- Context: deleting a video involves the database record and several storage objects (original, HLS renditions, thumbnail), which cannot be removed in one atomic step. Viewers must not learn whether a draft with a given id exists.
+- Decision: `DELETE` sets `deletedAt` (and unpublishes in the same update); every query excludes deleted videos; a cleanup job removes files and purges records later (Phase 4b/6). For viewers, drafts, archived, unprocessed and deleted videos all return the same `404 NOT_FOUND` as an unknown id.
+- Consequences: a crash between steps cannot leave a visible video without files or files without a record nobody knows about. Deleted records occupy space until the cleanup job runs.
+
+## ADR-041: Audit log in MongoDB, written after the change and awaited
+
+Status: Accepted (Phase 4a)
+
+- Context: the spec requires an audit record for every privileged change. Logs alone are not queryable by administrators and rotate away.
+- Decision: an append-only `auditLogs` collection (actor, action, target, a few explicit non-sensitive details, request id, IP), written after the change succeeds and awaited, so a failure to record shows up as an error instead of a silent gap. Server-side tools (admin CLI) write records with `via: cli`. `GET /admin/audit-logs` (permission `audit:read`) pages through it.
+- Consequences: a change that succeeds but whose audit write fails returns 500 even though the change happened; acceptable, and visible in the logs. A transaction would close that gap at extra cost; not needed for this project. Records are never updated or deleted by the application.
+
+## ADR-042: Separate management list (`GET /admin/videos`) from the catalogue (`GET /videos`)
+
+Status: Accepted (Phase 4a; adjusts the endpoint list in the spec)
+
+- Context: the spec lists one `GET /videos`. Administrators need drafts, failed uploads and every status; viewers must only ever see published, processed, public videos.
+- Decision: `GET /videos` is the catalogue for everyone (administrators see the same thing there). `GET /admin/videos` lists all non-deleted videos with status filters and management fields. `GET /videos/:id` returns the management view to administrators and the catalogue view to everyone else.
+- Consequences: one meaning per endpoint, simpler caching and tests; the catalogue can never leak a draft because of a missing role check on a query parameter.
+
+## ADR-043: Session lifetime for viewers to be revisited with playback
+
+Status: Proposed (decision deferred to Phase 5)
+
+- Context: sessions expire after 30 minutes idle and 12 hours absolute (ADR on server-side sessions). That suits administrators, but a viewer watching a long film makes no API calls and would be signed out mid-film.
+- Direction: media segments are fetched with short-lived signed URLs that do not depend on the session; the player saves watch progress every 30 to 60 seconds, which also counts as activity; viewer sessions get longer limits (around 7 days idle, 30 days absolute); sensitive actions (password, email, MFA changes, anything administrative) require re-authentication within the last 15 minutes; administrators keep the strict limits.
+- Consequences: no change now, because there is no player yet. Implemented together with playback in Phase 5, when signed URLs and watch progress exist.

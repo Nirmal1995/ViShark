@@ -64,12 +64,78 @@ Same shape for both (one Mongoose model each, `src/modules/auth/tokens.ts`).
 
 Lifecycle: issuing a token deletes the user's older tokens of that kind; using one deletes it atomically (`findOneAndDelete`); a successful reset deletes all of the user's reset tokens. Expired documents are removed by MongoDB within about a minute, and the query also rejects them, so the TTL delay is never a window.
 
+## categories
+
+| Field                    | Type     | Notes                                                                                                                                         |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_id`                    | ObjectId |                                                                                                                                               |
+| `name`                   | string   | 2 to 50 characters                                                                                                                            |
+| `slug`                   | string   | derived from the name (`Science & Nature` -> `science-nature`); **unique**, so names that differ only in case, spacing or punctuation collide |
+| `description`            | string   | up to 300 characters                                                                                                                          |
+| `createdAt`, `updatedAt` | Date     |                                                                                                                                               |
+
+At most 200 categories (the list endpoint returns them all, so the cap keeps it bounded). A category used by any non-deleted video cannot be deleted (`409 CATEGORY_IN_USE`).
+
+## videos
+
+Metadata only; the files live in private object storage under generated keys.
+
+| Field                                | Type                   | Notes                                                                             |
+| ------------------------------------ | ---------------------- | --------------------------------------------------------------------------------- |
+| `_id`                                | ObjectId               |                                                                                   |
+| `title`                              | string                 | 1 to 120 characters                                                               |
+| `description`                        | string                 | up to 5,000 characters                                                            |
+| `ownerId`                            | ObjectId               | the administrator who created it (`users`)                                        |
+| `categoryId`                         | ObjectId \| null       | `categories`                                                                      |
+| `visibility`                         | enum                   | `PUBLIC` (listed) or `UNLISTED` (watchable by link only)                          |
+| `publicationStatus`                  | enum                   | `DRAFT`, `PUBLISHED`, `ARCHIVED`                                                  |
+| `processingStatus`                   | enum                   | `INITIATED`, `UPLOADING`, `VERIFYING`, `PROCESSING`, `READY`, `FAILED`, `ABORTED` |
+| `storageKey`                         | string \| null         | object key of the original upload (Phase 4b); never returned by the API           |
+| `thumbnailKey`                       | string \| null         | (Phase 6); never returned by the API                                              |
+| `mimeType`, `sizeBytes`              | string, number \| null | verified after upload (Phase 4b)                                                  |
+| `durationSeconds`, `width`, `height` | number \| null         | measured by the worker (Phase 6)                                                  |
+| `failureReason`                      | string \| null         | short, operator-facing reason when processing failed                              |
+| `publishedAt`                        | Date \| null           | set on publish, cleared on unpublish                                              |
+| `deletedAt`                          | Date \| null           | soft delete: excluded from every query; files removed by a cleanup job            |
+| `createdAt`, `updatedAt`             | Date                   |                                                                                   |
+
+Status changes follow the state machines in `packages/shared/src/video-status.ts` and are applied atomically: the update only matches a document in an allowed state, so concurrent or stale requests get `409 INVALID_TRANSITION` instead of overwriting each other.
+
+| Index                                                            | Serves                                    |
+| ---------------------------------------------------------------- | ----------------------------------------- |
+| `{ publicationStatus, visibility, categoryId, publishedAt: -1 }` | the catalogue (newest first, by category) |
+| `{ categoryId, deletedAt }`                                      | "is this category in use"                 |
+| `{ processingStatus, updatedAt }`                                | finding stuck uploads and jobs (4b, 6)    |
+| `{ createdAt: -1 }`                                              | the management list                       |
+| text index on `title` (weight 3) and `description`               | `q` search                                |
+
+## auditLogs
+
+Append-only record of privileged changes. The application never updates or deletes these documents.
+
+| Field        | Type             | Notes                                                                                                                  |
+| ------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `actorId`    | ObjectId \| null | the administrator; `null` for server-side tools                                                                        |
+| `via`        | `api` \| `cli`   |                                                                                                                        |
+| `action`     | string           | for example `video.published`, `category.deleted`, `admin.created`                                                     |
+| `targetType` | string           | `video`, `category`, `user`                                                                                            |
+| `targetId`   | ObjectId \| null |                                                                                                                        |
+| `details`    | object           | a few non-sensitive values chosen by the code (old and new status, a title); never request bodies, passwords or tokens |
+| `requestId`  | string \| null   | links the record to the request logs                                                                                   |
+| `ip`         | string \| null   |                                                                                                                        |
+| `createdAt`  | Date             |                                                                                                                        |
+
+Indexes: `{ createdAt: -1 }`, `{ targetId, createdAt: -1 }`, `{ actorId, createdAt: -1 }`, `{ action, createdAt: -1 }`. No TTL: retention is a policy decision (for a real service, typically one year or more, archived to cheaper storage).
+
 ## Relationships
 
 ```
 users 1 ──── * sessions                  (session.userId → users._id as string)
 users 1 ──── * emailVerificationTokens   (userId)
 users 1 ──── * passwordResetTokens       (userId)
+users 1 ──── * videos                    (ownerId)
+categories 1 ──── * videos               (categoryId)
+users 1 ──── * auditLogs                 (actorId)
 ```
 
-Collections still to come: videos, categories, uploads, favourites, watchHistory, auditLogs.
+Collections still to come: uploads (Phase 4b), favourites and watchHistory (Phase 5).

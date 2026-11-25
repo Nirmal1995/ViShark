@@ -1,4 +1,16 @@
 import {
+  adminVideoDtoSchema,
+  adminVideosQuerySchema,
+  auditLogDtoSchema,
+  auditLogsQuerySchema,
+  catalogueQuerySchema,
+  catalogueVideoDtoSchema,
+  categoryDtoSchema,
+  createCategoryBodySchema,
+  createVideoBodySchema,
+  pageMetaSchema,
+  updateCategoryBodySchema,
+  updateVideoBodySchema,
   changePasswordBodySchema,
   deactivateAccountBodySchema,
   emailOnlyBodySchema,
@@ -99,6 +111,54 @@ const errors = (...statuses: string[]) =>
   );
 const ACCEPTED = 'If an account exists for this email, we have sent instructions to it.';
 
+/** Query parameters generated from a request schema, so docs and validation agree. */
+function queryParams(s: z.ZodType) {
+  const json = schema(s, 'input') as { properties?: Record<string, object> };
+  return Object.entries(json.properties ?? {}).map(([name, prop]) => ({
+    name,
+    in: 'query',
+    required: false,
+    schema: prop,
+  }));
+}
+const idParam = {
+  name: 'id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^[a-f0-9]{24}$' },
+};
+const pageOf = (name: string) => ({
+  'application/json': {
+    schema: {
+      type: 'object',
+      properties: { data: { type: 'array', items: ref(name) }, meta: ref('PageMeta') },
+      required: ['data', 'meta'],
+    },
+  },
+});
+const INVALID_TRANSITION = errorResponse(
+  'The video is not in a state that allows this change',
+  'INVALID_TRANSITION',
+  'This status change is not allowed',
+  { to: 'PUBLISHED', publicationStatus: 'DRAFT', processingStatus: 'PROCESSING' },
+);
+function videoTransition(summary: string, description: string) {
+  return {
+    post: {
+      tags: ['videos'],
+      summary,
+      description,
+      security: authenticated,
+      parameters: [idParam],
+      responses: {
+        '200': { description: 'Updated video', content: dataOf(ref('AdminVideoDto')) },
+        '409': INVALID_TRANSITION,
+        ...errors('400', '401', '403', '404'),
+      },
+    },
+  };
+}
+
 export function buildOpenApiDocument(version: string) {
   return {
     openapi: '3.1.0',
@@ -125,6 +185,13 @@ export function buildOpenApiDocument(version: string) {
         description:
           'Two-factor authentication (TOTP authenticator apps). Enrolment is for administrators.',
       },
+      { name: 'categories', description: 'Video categories (managed by administrators)' },
+      {
+        name: 'videos',
+        description:
+          'The catalogue for signed-in users, and video management for administrators. Status rules: publishing requires processing READY; see the error details of INVALID_TRANSITION.',
+      },
+      { name: 'admin', description: 'Administration: all videos, audit logs' },
     ],
     paths: {
       '/health/live': {
@@ -504,6 +571,170 @@ export function buildOpenApiDocument(version: string) {
           },
         },
       },
+      '/api/v1/categories': {
+        get: {
+          tags: ['categories'],
+          summary: 'List categories',
+          description: 'Sorted by name; at most 200.',
+          security: sessionOnly,
+          responses: {
+            '200': {
+              description: 'Categories',
+              content: dataOf({ type: 'array', items: ref('CategoryDto') }),
+            },
+            ...errors('401', '403'),
+          },
+        },
+        post: {
+          tags: ['categories'],
+          summary: 'Create a category',
+          security: authenticated,
+          requestBody: { required: true, content: json('CreateCategoryBody') },
+          responses: {
+            '201': { description: 'Created', content: dataOf(ref('CategoryDto')) },
+            '409': errorResponse(
+              'Name taken',
+              'CATEGORY_EXISTS',
+              'A category with this name already exists',
+            ),
+            ...errors('400', '401', '403'),
+          },
+        },
+      },
+      '/api/v1/categories/{id}': {
+        patch: {
+          tags: ['categories'],
+          summary: 'Rename or describe a category',
+          security: authenticated,
+          parameters: [idParam],
+          requestBody: { required: true, content: json('UpdateCategoryBody') },
+          responses: {
+            '200': { description: 'Updated', content: dataOf(ref('CategoryDto')) },
+            '409': errorResponse(
+              'Name taken',
+              'CATEGORY_EXISTS',
+              'A category with this name already exists',
+            ),
+            ...errors('400', '401', '403', '404'),
+          },
+        },
+        delete: {
+          tags: ['categories'],
+          summary: 'Delete a category',
+          description: 'Refused while any video uses it.',
+          security: authenticated,
+          parameters: [idParam],
+          responses: {
+            '204': { description: 'Deleted' },
+            '409': errorResponse(
+              'Still in use',
+              'CATEGORY_IN_USE',
+              'The category is used by 3 video(s); move them to another category first',
+            ),
+            ...errors('400', '401', '403', '404'),
+          },
+        },
+      },
+      '/api/v1/videos': {
+        get: {
+          tags: ['videos'],
+          summary: 'Browse the catalogue',
+          description:
+            'Published, processed, public videos, newest first. `q` searches titles and descriptions.',
+          security: sessionOnly,
+          parameters: queryParams(catalogueQuerySchema),
+          responses: {
+            '200': { description: 'A page of videos', content: pageOf('CatalogueVideoDto') },
+            ...errors('400', '401', '403'),
+          },
+        },
+        post: {
+          tags: ['videos'],
+          summary: 'Create a video (draft)',
+          description:
+            'Creates the metadata record. The file is uploaded afterwards (uploads, Phase 4b); until then processing is INITIATED.',
+          security: authenticated,
+          requestBody: { required: true, content: json('CreateVideoBody') },
+          responses: {
+            '201': { description: 'Created', content: dataOf(ref('AdminVideoDto')) },
+            ...errors('400', '401', '403'),
+          },
+        },
+      },
+      '/api/v1/videos/{id}': {
+        get: {
+          tags: ['videos'],
+          summary: 'One video',
+          description:
+            'Viewers get published, processed videos (public or unlisted) and 404 for anything else. Administrators get any non-deleted video with management fields.',
+          security: sessionOnly,
+          parameters: [idParam],
+          responses: {
+            '200': {
+              description: 'Video (AdminVideoDto for administrators)',
+              content: dataOf(ref('CatalogueVideoDto')),
+            },
+            ...errors('400', '401', '404'),
+          },
+        },
+        patch: {
+          tags: ['videos'],
+          summary: 'Edit video details',
+          description:
+            'Title, description, category and visibility only; statuses change through the action endpoints.',
+          security: authenticated,
+          parameters: [idParam],
+          requestBody: { required: true, content: json('UpdateVideoBody') },
+          responses: {
+            '200': { description: 'Updated', content: dataOf(ref('AdminVideoDto')) },
+            ...errors('400', '401', '403', '404'),
+          },
+        },
+        delete: {
+          tags: ['videos'],
+          summary: 'Delete a video',
+          description:
+            'Soft delete: hidden everywhere immediately; files are removed by a cleanup job.',
+          security: authenticated,
+          parameters: [idParam],
+          responses: { '204': { description: 'Deleted' }, ...errors('400', '401', '403', '404') },
+        },
+      },
+      '/api/v1/videos/{id}/publish': videoTransition(
+        'Publish',
+        'From DRAFT, and only when processing is READY.',
+      ),
+      '/api/v1/videos/{id}/unpublish': videoTransition(
+        'Unpublish',
+        'From PUBLISHED back to DRAFT.',
+      ),
+      '/api/v1/videos/{id}/archive': videoTransition('Archive', 'From DRAFT or PUBLISHED.'),
+      '/api/v1/videos/{id}/restore': videoTransition('Restore', 'From ARCHIVED back to DRAFT.'),
+      '/api/v1/admin/videos': {
+        get: {
+          tags: ['admin', 'videos'],
+          summary: 'All videos, any state',
+          security: sessionOnly,
+          parameters: queryParams(adminVideosQuerySchema),
+          responses: {
+            '200': { description: 'A page of videos', content: pageOf('AdminVideoDto') },
+            ...errors('400', '401', '403'),
+          },
+        },
+      },
+      '/api/v1/admin/audit-logs': {
+        get: {
+          tags: ['admin'],
+          summary: 'Audit log',
+          description: 'Every privileged change, newest first.',
+          security: sessionOnly,
+          parameters: queryParams(auditLogsQuerySchema),
+          responses: {
+            '200': { description: 'A page of audit records', content: pageOf('AuditLogDto') },
+            ...errors('400', '401', '403'),
+          },
+        },
+      },
       '/api/v1/users/me': {
         get: {
           tags: ['users'],
@@ -558,6 +789,15 @@ export function buildOpenApiDocument(version: string) {
         ChangePasswordBody: body(changePasswordBodySchema),
         DeactivateAccountBody: body(deactivateAccountBodySchema),
         UpdateProfileBody: body(updateProfileBodySchema),
+        CreateCategoryBody: body(createCategoryBodySchema),
+        UpdateCategoryBody: body(updateCategoryBodySchema),
+        CreateVideoBody: body(createVideoBodySchema),
+        UpdateVideoBody: body(updateVideoBodySchema),
+        PageMeta: schema(pageMetaSchema),
+        CategoryDto: schema(categoryDtoSchema),
+        CatalogueVideoDto: schema(catalogueVideoDtoSchema),
+        AdminVideoDto: schema(adminVideoDtoSchema),
+        AuditLogDto: schema(auditLogDtoSchema),
         MfaSetupBody: body(mfaSetupBodySchema),
         MfaEnableBody: body(mfaEnableBodySchema),
         MfaVerifyBody: body(mfaVerifyBodySchema),
