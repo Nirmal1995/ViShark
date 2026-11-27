@@ -49,6 +49,7 @@ docker run -d --name "$name" -p 127.0.0.1::4000 \
   -e SESSION_SECRET="$(openssl rand -hex 24)" \
   -e MFA_ENCRYPTION_KEY="$(openssl rand -hex 24)" \
   -e WEB_ORIGIN=https://streamhub.invalid \
+  -e S3_BUCKET_UPLOADS=smoke-uploads \
   "$image" >/dev/null
 port="$(docker port "$name" 4000/tcp | head -1 | awk -F: '{print $NF}')"
 for _ in $(seq 1 30); do

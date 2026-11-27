@@ -26,6 +26,12 @@ import {
   updateProfileBodySchema,
   userDtoSchema,
   verifyEmailBodySchema,
+  completeUploadBodySchema,
+  partUrlsDtoSchema,
+  startUploadBodySchema,
+  uploadDtoSchema,
+  uploadPartUrlsBodySchema,
+  uploadSessionDtoSchema,
 } from '@streamhub/contracts';
 import { z } from 'zod';
 
@@ -142,6 +148,18 @@ const INVALID_TRANSITION = errorResponse(
   'This status change is not allowed',
   { to: 'PUBLISHED', publicationStatus: 'DRAFT', processingStatus: 'PROCESSING' },
 );
+const UPLOAD_NOT_ACTIVE = errorResponse(
+  'The upload already finished, failed or was cancelled',
+  'UPLOAD_NOT_ACTIVE',
+  'This upload is no longer in progress',
+  { status: 'COMPLETED' },
+);
+const UPLOAD_EXPIRED = errorResponse(
+  'The upload passed its deadline',
+  'UPLOAD_EXPIRED',
+  'This upload has expired; create a new video to try again',
+);
+
 function videoTransition(summary: string, description: string) {
   return {
     post: {
@@ -192,6 +210,11 @@ export function buildOpenApiDocument(version: string) {
           'The catalogue for signed-in users, and video management for administrators. Status rules: publishing requires processing READY; see the error details of INVALID_TRANSITION.',
       },
       { name: 'admin', description: 'Administration: all videos, audit logs' },
+      {
+        name: 'uploads',
+        description:
+          'Direct-to-storage multipart uploads: start, PUT each part to its pre-signed URL (keep the ETag response header), then complete.',
+      },
     ],
     paths: {
       '/health/live': {
@@ -722,6 +745,91 @@ export function buildOpenApiDocument(version: string) {
           },
         },
       },
+      '/api/v1/admin/videos/{id}/upload': {
+        post: {
+          tags: ['uploads'],
+          summary: 'Start the upload',
+          description:
+            'For a video in INITIATED. Returns a pre-signed PUT URL per part; every part except the last must be exactly partSizeBytes. The video moves to UPLOADING. One upload per video.',
+          security: authenticated,
+          parameters: [idParam],
+          requestBody: { required: true, content: json('StartUploadBody') },
+          responses: {
+            '201': { description: 'Upload started', content: dataOf(ref('UploadSessionDto')) },
+            '409': INVALID_TRANSITION,
+            '413': errorResponse(
+              'File larger than allowed',
+              'UPLOAD_TOO_LARGE',
+              'The file is larger than allowed',
+              { maxBytes: 2147483648 },
+            ),
+            ...errors('400', '401', '403', '404'),
+          },
+        },
+        get: {
+          tags: ['uploads'],
+          summary: 'Upload status',
+          security: sessionOnly,
+          parameters: [idParam],
+          responses: {
+            '200': { description: 'The upload', content: dataOf(ref('UploadDto')) },
+            ...errors('401', '403', '404'),
+          },
+        },
+      },
+      '/api/v1/admin/videos/{id}/upload/part-urls': {
+        post: {
+          tags: ['uploads'],
+          summary: 'Fresh URLs for some parts',
+          description: 'When part URLs expired before the parts were sent. At most 100 per call.',
+          security: authenticated,
+          parameters: [idParam],
+          requestBody: { required: true, content: json('UploadPartUrlsBody') },
+          responses: {
+            '200': { description: 'Signed URLs', content: dataOf(ref('PartUrlsDto')) },
+            '409': UPLOAD_NOT_ACTIVE,
+            '410': UPLOAD_EXPIRED,
+            ...errors('400', '401', '403', '404'),
+          },
+        },
+      },
+      '/api/v1/admin/videos/{id}/upload/complete': {
+        post: {
+          tags: ['uploads'],
+          summary: 'Complete and verify the upload',
+          description:
+            'Send every part with its ETag. The API completes the multipart upload, then checks the stored size and the file signature. On success the video moves to VERIFYING; a wrong file is deleted and the video moves to FAILED.',
+          security: authenticated,
+          parameters: [idParam],
+          requestBody: { required: true, content: json('CompleteUploadBody') },
+          responses: {
+            '200': { description: 'Upload completed', content: dataOf(ref('UploadDto')) },
+            '409': UPLOAD_NOT_ACTIVE,
+            '410': UPLOAD_EXPIRED,
+            '422': errorResponse(
+              'The file failed verification',
+              'UPLOAD_VERIFICATION_FAILED',
+              'The uploaded file was rejected',
+              { reason: 'file content is not video/mp4' },
+            ),
+            ...errors('400', '401', '403', '404'),
+          },
+        },
+      },
+      '/api/v1/admin/videos/{id}/upload/abort': {
+        post: {
+          tags: ['uploads'],
+          summary: 'Cancel the upload',
+          description: 'Storage discards the parts; the video moves to ABORTED.',
+          security: authenticated,
+          parameters: [idParam],
+          responses: {
+            '200': { description: 'Upload cancelled', content: dataOf(ref('UploadDto')) },
+            '409': UPLOAD_NOT_ACTIVE,
+            ...errors('401', '403', '404'),
+          },
+        },
+      },
       '/api/v1/admin/audit-logs': {
         get: {
           tags: ['admin'],
@@ -798,6 +906,12 @@ export function buildOpenApiDocument(version: string) {
         CatalogueVideoDto: schema(catalogueVideoDtoSchema),
         AdminVideoDto: schema(adminVideoDtoSchema),
         AuditLogDto: schema(auditLogDtoSchema),
+        StartUploadBody: body(startUploadBodySchema),
+        UploadPartUrlsBody: body(uploadPartUrlsBodySchema),
+        CompleteUploadBody: body(completeUploadBodySchema),
+        UploadDto: schema(uploadDtoSchema),
+        UploadSessionDto: schema(uploadSessionDtoSchema),
+        PartUrlsDto: schema(partUrlsDtoSchema),
         MfaSetupBody: body(mfaSetupBodySchema),
         MfaEnableBody: body(mfaEnableBodySchema),
         MfaVerifyBody: body(mfaVerifyBodySchema),

@@ -11,9 +11,38 @@ const productionBase = {
   ...base,
   NODE_ENV: 'production',
   WEB_ORIGIN: 'https://streamhub.example.com',
+  S3_BUCKET_UPLOADS: 'streamhub-dev-uploads-123456789012',
 };
 
 describe('loadConfig', () => {
+  it('requires an explicit uploads bucket in production, with a local default otherwise', () => {
+    expect(loadConfig(base).S3_BUCKET_UPLOADS).toBe('streamhub-uploads');
+    const { S3_BUCKET_UPLOADS: _omit, ...withoutBucket } = productionBase;
+    expect(() => loadConfig(withoutBucket)).toThrowError(
+      /S3_BUCKET_UPLOADS: is required in production/,
+    );
+    expect(loadConfig(productionBase).S3_BUCKET_UPLOADS).toBe(productionBase.S3_BUCKET_UPLOADS);
+  });
+
+  it('takes storage keys as a pair, or none for role credentials', () => {
+    expect(() => loadConfig({ ...base, S3_ACCESS_KEY_ID: 'only-the-id' })).toThrowError(
+      /S3_ACCESS_KEY_ID: set both/,
+    );
+    const roleBased = loadConfig(productionBase);
+    expect(roleBased.S3_ACCESS_KEY_ID).toBeUndefined();
+    expect(roleBased.S3_ENDPOINT).toBeUndefined();
+  });
+
+  it('rejects a part size that would need more than 10,000 parts', () => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        UPLOAD_MAX_BYTES: String(50 * 1024 ** 3),
+        UPLOAD_PART_SIZE_BYTES: String(5 * 1024 * 1024),
+      }),
+    ).toThrowError(/UPLOAD_PART_SIZE_BYTES/);
+  });
+
   it('rejects a MONGO_URL without a database name', () => {
     for (const url of [
       'mongodb+srv://u:p@cluster0.abc.mongodb.net/?retryWrites=true',

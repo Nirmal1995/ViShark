@@ -37,6 +37,24 @@
         "arn:aws:ssm:eu-west-1:<ACCOUNT_ID>:parameter/streamhub/dev",
         "arn:aws:ssm:eu-west-1:<ACCOUNT_ID>:parameter/streamhub/dev/*"
       ]
+    },
+    {
+      "Sid": "UploadsBucketLookups",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::streamhub-dev-uploads-<ACCOUNT_ID>"
+    },
+    {
+      "Sid": "UploadsUnderVideosPrefixOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": "arn:aws:s3:::streamhub-dev-uploads-<ACCOUNT_ID>/videos/*"
     }
   ]
 }

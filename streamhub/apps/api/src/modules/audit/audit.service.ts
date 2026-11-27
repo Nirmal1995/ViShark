@@ -48,3 +48,15 @@ export async function auditCli(entry: AuditEntry): Promise<void> {
     details: entry.details ?? {},
   });
 }
+
+/** Same record for background jobs (for example upload expiry), which have no user. */
+export async function auditSystem(entry: AuditEntry): Promise<void> {
+  await AuditLogModel.create({
+    actorId: null,
+    via: 'system',
+    action: entry.action,
+    targetType: entry.targetType,
+    targetId: entry.targetId ?? null,
+    details: entry.details ?? {},
+  });
+}

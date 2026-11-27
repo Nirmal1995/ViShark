@@ -12,7 +12,7 @@ const auditLogSchema = new Schema(
   {
     actorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
     /** "cli" for server-side tools, "api" for requests. */
-    via: { type: String, enum: ['api', 'cli'], required: true },
+    via: { type: String, enum: ['api', 'cli', 'system'], required: true },
     action: { type: String, required: true, maxlength: 60 },
     targetType: { type: String, required: true, maxlength: 30 },
     targetId: { type: Schema.Types.ObjectId, default: null },

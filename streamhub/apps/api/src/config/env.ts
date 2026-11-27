@@ -109,6 +109,36 @@ const envSchema = z
     SMTP_USER: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
     MAIL_FROM: z.string().min(3).default('StreamHub <no-reply@streamhub.local>'),
+
+    // Object storage (ADR-044). Locally: MinIO-compatible storage with an
+    // endpoint and keys. On AWS: leave S3_ENDPOINT and both keys unset, and the
+    // SDK uses the instance or task role, so there is no storage secret at all.
+    S3_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
+    S3_REGION: z.string().min(1).default('eu-west-1'),
+    S3_FORCE_PATH_STYLE: booleanFromString.default(false),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    S3_BUCKET_UPLOADS: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'must be a valid bucket name')
+      .optional(),
+
+    // Uploads. Parts must be at least 5 MiB (S3 rule, except the last one) and
+    // an upload has at most 10,000 parts.
+    UPLOAD_MAX_BYTES: z.coerce
+      .number()
+      .int()
+      .min(1024 * 1024)
+      .max(50 * 1024 ** 3)
+      .default(2 * 1024 ** 3),
+    UPLOAD_PART_SIZE_BYTES: z.coerce
+      .number()
+      .int()
+      .min(5 * 1024 * 1024)
+      .max(512 * 1024 * 1024)
+      .default(16 * 1024 * 1024),
+    UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+    UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(24),
   })
   .transform((env) => ({
     ...env,
@@ -116,6 +146,9 @@ const envSchema = z
     API_DOCS_ENABLED: env.API_DOCS_ENABLED ?? env.NODE_ENV !== 'production',
     // Secure cookies are mandatory in production; locally the site is plain HTTP.
     COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
+    // A default bucket name is convenient locally and wrong in production.
+    S3_BUCKET_UPLOADS:
+      env.S3_BUCKET_UPLOADS ?? (env.NODE_ENV === 'production' ? '' : 'streamhub-uploads'),
   }))
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production' && env.LOG_PRETTY) {
@@ -130,6 +163,28 @@ const envSchema = z
         code: 'custom',
         path: ['COOKIE_SECURE'],
         message: 'must be true in production',
+      });
+    }
+    if (!env.S3_BUCKET_UPLOADS) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_BUCKET_UPLOADS'],
+        message: 'is required in production',
+      });
+    }
+    if (Boolean(env.S3_ACCESS_KEY_ID) !== Boolean(env.S3_SECRET_ACCESS_KEY)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_ACCESS_KEY_ID'],
+        message:
+          'set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or neither (role credentials)',
+      });
+    }
+    if (Math.ceil(env.UPLOAD_MAX_BYTES / env.UPLOAD_PART_SIZE_BYTES) > 10_000) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['UPLOAD_PART_SIZE_BYTES'],
+        message: 'too small for UPLOAD_MAX_BYTES (S3 allows at most 10,000 parts)',
       });
     }
     if (env.NODE_ENV === 'production' && !env.WEB_ORIGIN.startsWith('https://')) {

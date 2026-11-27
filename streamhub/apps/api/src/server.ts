@@ -1,5 +1,6 @@
 import type { Server } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
+import mongoose from 'mongoose';
 import { createApp } from './app.ts';
 import { ConfigError, loadConfig } from './config/env.ts';
 import { createMongoConnection, whenConnected } from './database/mongo.ts';
@@ -8,10 +9,15 @@ import { createSmtpMailer } from './infrastructure/mailer.ts';
 import { createMetricsApp } from './infrastructure/metrics-server.ts';
 import { createMetrics } from './infrastructure/metrics.ts';
 import { createRedis, pingRedis } from './infrastructure/redis.ts';
+import { createS3Client, S3ObjectStorage } from './infrastructure/storage.ts';
 import { createAuthModule } from './modules/auth/index.ts';
 import { catalogRoutes } from './modules/catalog.ts';
 import { ensureIndexes } from './database/indexes.ts';
 import { HealthService } from './modules/health/health.service.ts';
+import { createUploadsService } from './modules/uploads/uploads.service.ts';
+
+/** How often abandoned uploads are cleaned up. */
+const UPLOAD_EXPIRY_INTERVAL_MS = 15 * 60 * 1000;
 
 const VERSION = process.env.npm_package_version ?? '0.1.0';
 
@@ -52,7 +58,18 @@ function main(): void {
     // the session store waits on it.
     mongoClientPromise: whenConnected(),
   });
-  auth.routes.push(...catalogRoutes());
+  // Storage is not part of readiness: most requests never touch it, and an S3
+  // blip should not take the whole API out of rotation. A failed check at
+  // startup is logged loudly instead.
+  const uploadsStorage = new S3ObjectStorage(createS3Client(config), config.S3_BUCKET_UPLOADS);
+  uploadsStorage
+    .ping()
+    .then(() => logger.info({ bucket: uploadsStorage.bucket }, 'storage reachable'))
+    .catch((err: unknown) =>
+      logger.error({ err, bucket: uploadsStorage.bucket }, 'storage not reachable'),
+    );
+  const uploads = createUploadsService({ storage: uploadsStorage, config, logger });
+  auth.routes.push(...catalogRoutes({ uploads }));
 
   const app = createApp({ config, logger, health, metrics, auth, version: VERSION });
 
@@ -98,6 +115,15 @@ function main(): void {
     }
   })();
 
+  // Expiry runs in the API for now; it moves to the worker in Phase 6. Several
+  // instances can run it at once, because each upload is claimed atomically.
+  const expiryTimer = setInterval(() => {
+    // bufferCommands is off: skip the run while the database is not connected.
+    if (mongoose.connection.readyState !== mongoose.ConnectionStates.connected) return;
+    uploads.expireStale().catch((err: unknown) => logger.error({ err }, 'upload expiry failed'));
+  }, UPLOAD_EXPIRY_INTERVAL_MS);
+  expiryTimer.unref();
+
   // Graceful shutdown: stop being "ready" (load balancer drains us), stop
   // accepting connections, let in-flight requests finish, then close
   // connections. A hard deadline guarantees the process exits.
@@ -106,6 +132,7 @@ function main(): void {
     shuttingDown = true;
     logger.info({ signal }, 'shutdown started');
     health.startDraining();
+    clearInterval(expiryTimer);
 
     const deadline = setTimeout(() => {
       logger.error('shutdown deadline exceeded, forcing exit');

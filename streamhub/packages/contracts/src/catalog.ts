@@ -142,7 +142,7 @@ export const adminVideoDtoSchema = catalogueVideoDtoSchema.extend({
 export const auditLogDtoSchema = z.object({
   id: z.string(),
   actorId: z.string().nullable(),
-  via: z.enum(['api', 'cli']),
+  via: z.enum(['api', 'cli', 'system']),
   action: z.string(),
   targetType: z.string(),
   targetId: z.string().nullable(),

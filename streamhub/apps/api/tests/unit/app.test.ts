@@ -117,6 +117,10 @@ describe('versioned API and docs', () => {
       '/api/v1/videos/{id}',
       '/api/v1/videos/{id}/publish',
       '/api/v1/admin/videos',
+      '/api/v1/admin/videos/{id}/upload',
+      '/api/v1/admin/videos/{id}/upload/part-urls',
+      '/api/v1/admin/videos/{id}/upload/complete',
+      '/api/v1/admin/videos/{id}/upload/abort',
       '/api/v1/admin/audit-logs',
     ]) {
       expect(doc.paths).toHaveProperty([path]);

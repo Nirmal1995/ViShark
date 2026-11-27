@@ -407,3 +407,35 @@ The owner built the dev environment by hand from `docs/operations/dev-environmen
 2. **OIDC "Not authorized to perform sts:AssumeRoleWithWebIdentity".** Provider, audience and trust policy all looked right. The failed `AssumeRoleWithWebIdentity` event in CloudTrail showed the subject GitHub actually sent: `repo:Nirmal1995@97385213/ViShark@1452920948:ref:refs/heads/main` (owner and repository IDs included). The trust policy and docs now use that subject; it also stops a re-created repository with the same name from assuming the role.
 3. **`db:migrate` failed with "not allowed to do action [createIndex] on [test.sessions]".** The Atlas connection string had no database name, so the driver used `test`, where the least-privilege user has no rights. Config validation now rejects a `MONGO_URL` without a database name.
 4. The deploy logs are public (public repository); the AWS credentials step now masks the account ID.
+
+## Phase 4b: storage abstraction and multipart uploads (2026-11-27)
+
+### What was built
+
+- `ObjectStorage` interface on AWS SDK v3 (`infrastructure/storage.ts`): MinIO-compatible storage locally, S3 with role credentials on AWS (no endpoint, no keys). Checksums only where required, so pre-signed URLs stay plain.
+- `uploads` collection and service: start (generated key, pre-signed URL per part, video INITIATED to UPLOADING), fresh part URLs, complete (claim, multipart complete, size and file-signature checks, video to VERIFYING, or delete and FAILED), abort (video ABORTED), and an expiry sweep every 15 minutes (video ABORTED, `via: system` audit record).
+- Endpoints under `/api/v1/admin/videos/{id}/upload` (start, status, part-urls, complete, abort), documented in OpenAPI; audit records for start, complete, abort, rejection and expiry.
+- Config: `S3_*` (bucket required in production, keys as a pair or not at all), `UPLOAD_MAX_BYTES` (2 GiB), `UPLOAD_PART_SIZE_BYTES` (16 MiB), `UPLOAD_URL_TTL_SECONDS` (900), `UPLOAD_SESSION_TTL_HOURS` (24).
+- Dev environment: `S3_BUCKET_UPLOADS` from SSM, `S3_REGION` in `api.env`, IAM statements for the uploads bucket (`videos/*` only), CORS and lifecycle steps in the runbook (step 10), hop limit 2 (ADR-045). The deploy job references an `AWS_ACCOUNT_ID` secret so the account ID is masked in every log line.
+- ADR-044 (direct-to-storage uploads, S3 through roles), ADR-045 (hop limit 2 as a documented dev gap).
+
+### Errors encountered
+
+1. The sandbox emulator answers a part PUT after abort with 500 instead of S3's 404 `NoSuchUpload`; the test asserts "not accepted" rather than one status code.
+2. Three lint errors (unnecessary type assertions) and one unused import, fixed.
+
+### Validation done in the assistant sandbox
+
+- `pnpm check`: 130 API unit tests (new: storage and upload config rules, file signatures), 25 contracts (new: upload schemas), 23 shared.
+- Integration: 126 (11 new) against MongoDB, Redis, Mailpit and an S3 emulator (moto) standing in for MinIO: a real two-part upload with browser-style PUTs, unquoted ETags and out-of-order parts, fresh part URLs, permissions, unsupported type, size limit (413), double start (409), missing part and wrong ETag (400, upload still usable), wrong file type and short file (422, file deleted, video FAILED), abort (409 afterwards, parts refused), deadline passed (410), and the expiry sweep run twice.
+- CI runs the same suite against the real MinIO-compatible storage container.
+
+### Acceptance criteria
+
+| Criterion                                                             | Result (sandbox) | Result (owner) |
+| --------------------------------------------------------------------- | ---------------- | -------------- |
+| A real file uploads to storage end to end through the API             | pass             | pending        |
+| Wrong size or a non-video file is rejected and deleted                | pass             | pending        |
+| Invalid transitions are rejected (double start, complete after abort) | pass             | pending        |
+| Abort and expiry clean up storage and end the video                   | pass             | pending        |
+| Dev server: storage reachable through the instance role               | n/a              | pending        |

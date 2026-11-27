@@ -12,7 +12,9 @@ load_release
 region="$(instance_region)"
 log "release ${GIT_COMMIT:0:12}, region $region"
 
-# 1. Secrets. Required: MONGO_URL, SESSION_SECRET, MFA_ENCRYPTION_KEY, REDIS_PASSWORD.
+# 1. Secrets and account-specific settings. Required: MONGO_URL, SESSION_SECRET,
+#    MFA_ENCRYPTION_KEY, REDIS_PASSWORD, S3_BUCKET_UPLOADS (not secret, but it
+#    contains the account ID, and the repository is public).
 umask 077
 mkdir -p "$RUNTIME_DIR"
 chmod 0700 "$RUNTIME_DIR"
@@ -24,7 +26,7 @@ done < <(aws ssm get-parameters-by-path --region "$region" --path "$PARAMETER_PA
 
 secrets_tmp="$(mktemp "$RUNTIME_DIR/secrets.XXXXXX")"
 trap 'rm -f "$secrets_tmp"' EXIT
-for key in MONGO_URL SESSION_SECRET MFA_ENCRYPTION_KEY REDIS_PASSWORD; do
+for key in MONGO_URL SESSION_SECRET MFA_ENCRYPTION_KEY REDIS_PASSWORD S3_BUCKET_UPLOADS; do
   value="${params[$key]:-}"
   [ -n "$value" ] || die "SSM parameter ${PARAMETER_PATH}${key} is missing or empty"
   # Values are written single-quoted (taken literally by Compose), so a value

@@ -1,0 +1,9 @@
+[
+  {
+    "AllowedOrigins": ["https://streamhub-dev.invalid"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
