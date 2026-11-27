@@ -47,7 +47,13 @@ const envSchema = z
 
     MONGO_URL: z
       .string()
-      .regex(/^mongodb(\+srv)?:\/\//, 'must start with mongodb:// or mongodb+srv://'),
+      .regex(/^mongodb(\+srv)?:\/\//, 'must start with mongodb:// or mongodb+srv://')
+      // Without a database name the driver silently uses "test" (seen on the
+      // first dev deploy, where a least-privilege user then got "not allowed").
+      .regex(
+        /^mongodb(\+srv)?:\/\/[^/?]+\/[^/?]+/,
+        'must name the database after the host, e.g. .../streamhub?...',
+      ),
     MONGO_SERVER_SELECTION_TIMEOUT_MS: z.coerce.number().int().min(500).default(5000),
 
     REDIS_URL: z.string().regex(/^rediss?:\/\//, 'must start with redis:// or rediss://'),

@@ -77,6 +77,8 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           # Shorter than the 1 hour default: a deployment takes minutes.
           role-duration-seconds: 1800
+          # The repository is public, so are its logs: show the account ID as ***.
+          mask-aws-account-id: true
 
       - name: Push the image to ECR
         id: publish
