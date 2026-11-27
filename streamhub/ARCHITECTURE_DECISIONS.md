@@ -355,3 +355,22 @@ Status: Proposed (decision deferred to Phase 5)
 - Context: sessions expire after 30 minutes idle and 12 hours absolute (ADR on server-side sessions). That suits administrators, but a viewer watching a long film makes no API calls and would be signed out mid-film.
 - Direction: media segments are fetched with short-lived signed URLs that do not depend on the session; the player saves watch progress every 30 to 60 seconds, which also counts as activity; viewer sessions get longer limits (around 7 days idle, 30 days absolute); sensitive actions (password, email, MFA changes, anything administrative) require re-authentication within the last 15 minutes; administrators keep the strict limits.
 - Consequences: no change now, because there is no player yet. Implemented together with playback in Phase 5, when signed URLs and watch progress exist.
+
+## ADR-044: Direct-to-storage multipart uploads; S3 through role credentials on AWS
+
+Status: Accepted (Phase 4b)
+
+- Context: video files are large (up to 2 GiB by default). Streaming them through the API would tie up a t3.micro's memory, bandwidth and request timeouts.
+- Decision: the browser uploads parts straight to object storage with pre-signed `UploadPart` URLs (15 minutes, re-signable per part); the API only starts, completes, verifies and aborts. After completing it checks that the object exists, that its size equals the declared size, and that its first bytes match the declared container (ISO media for MP4/QuickTime, EBML for WebM). A wrong file is deleted and the video fails. Keys are generated (`videos/<id>/source/<uuid>`), never user-supplied. One upload per video (unique index); `COMPLETING` is a claim so two completes cannot both run. Abandoned uploads expire after 24 hours (sweep every 15 minutes, atomic per upload) with an `AbortIncompleteMultipartUpload` lifecycle rule as a safety net.
+- Storage access goes through one `ObjectStorage` interface on the AWS SDK v3. Locally: MinIO-compatible storage with an endpoint and keys. On AWS: no endpoint and no keys, so the SDK uses the instance (later: task) role. Flexible checksums are limited to `WHEN_REQUIRED`, because default CRC parameters in pre-signed URLs break plain browser PUTs and S3-compatible servers.
+- Raw uploads go to S3 (not R2): role credentials mean no storage secret exists to leak or rotate. Transcoded media for playback is decided in the playback phase (likely R2 behind Cloudflare, ADR to follow).
+- Storage is not part of readiness: most requests never touch it. Reachability is checked and logged at startup.
+- Consequences: the bucket needs CORS (PUT from the web origin, `ETag` exposed). Verification is a first gate only; ffprobe in the worker decides whether the file actually decodes.
+
+## ADR-045: Metadata hop limit 2 on the dev server (known gap)
+
+Status: Accepted for dev; to be replaced
+
+- Context: the dev server enforces IMDSv2 with a hop limit of 1, so containers cannot reach the instance role's credentials. The API container now needs them for S3.
+- Decision: raise the hop limit to 2 on the dev server. Simple and keeps "no S3 keys anywhere".
+- Consequences: every container on the host (Redis and Mailpit too) can obtain the role's credentials. The role is narrow (one bucket prefix, one ECR repository, the `/streamhub/dev/` parameters), but this is broader than necessary. Production answer, planned as its own infrastructure phase: run the API on ECS with a task role, so only the API gets S3 access, and the host role keeps hop limit 1.

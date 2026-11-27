@@ -53,6 +53,10 @@ jobs:
       DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
       CODEDEPLOY_APPLICATION: ${{ vars.CODEDEPLOY_APPLICATION }}
       CODEDEPLOY_GROUP: ${{ vars.CODEDEPLOY_GROUP }}
+      # Not used by any step. Referencing the secret makes the runner mask the
+      # account ID in every log line of this job, from the first step header
+      # on (the repository and its logs are public).
+      MASK_AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
     defaults:
       run:
         shell: bash

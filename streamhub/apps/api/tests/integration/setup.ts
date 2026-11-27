@@ -11,6 +11,15 @@ import { loadConfig, type AppConfig } from '../../src/config/env.ts';
 import { createMemoryMailer, type Mailer } from '../../src/infrastructure/mailer.ts';
 import { createRedis } from '../../src/infrastructure/redis.ts';
 import { catalogRoutes } from '../../src/modules/catalog.ts';
+import {
+  createS3Client,
+  S3ObjectStorage,
+  type ObjectStorage,
+} from '../../src/infrastructure/storage.ts';
+import {
+  createUploadsService,
+  type UploadsService,
+} from '../../src/modules/uploads/uploads.service.ts';
 import { createAuthModule } from '../../src/modules/auth/index.ts';
 import { createPasswordHasher } from '../../src/modules/auth/password.ts';
 import type { SessionPolicy } from '../../src/modules/auth/session.ts';
@@ -95,6 +104,11 @@ export async function disconnectTestInfra(): Promise<void> {
   await mongoose.disconnect();
 }
 
+/** The uploads bucket from the test configuration (local MinIO-compatible storage). */
+export function testStorage(config = testConfig()): ObjectStorage {
+  return new S3ObjectStorage(createS3Client(config), config.S3_BUCKET_UPLOADS);
+}
+
 export function buildAuthApp(options: {
   redis: Redis;
   config?: AppConfig;
@@ -104,8 +118,13 @@ export function buildAuthApp(options: {
   mailer?: Mailer;
   /** Clock for TOTP checks. */
   now?: () => number;
+  /** Defaults to the real uploads bucket from the test configuration. */
+  uploads?: UploadsService;
 }) {
   const config = options.config ?? testConfig();
+  const uploads =
+    options.uploads ??
+    createUploadsService({ storage: testStorage(config), config, logger: silentLogger });
   const auth = createAuthModule({
     config,
     logger: silentLogger,
@@ -115,7 +134,7 @@ export function buildAuthApp(options: {
     ...(options.policy ? { policy: options.policy } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
-  auth.routes.push(...catalogRoutes(), ...(options.extraRoutes ?? []));
+  auth.routes.push(...catalogRoutes({ uploads }), ...(options.extraRoutes ?? []));
   return createApp({
     config: { ...config, API_DOCS_ENABLED: false },
     logger: silentLogger,

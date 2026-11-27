@@ -11,6 +11,7 @@ Names used throughout (they appear in the IAM policies, so keep them or change b
 | SSM parameter path     | `/streamhub/dev/`                                                         |
 | CodeDeploy application | `streamhub`, deployment group `streamhub-dev`                             |
 | IAM roles              | `streamhub-github-deploy`, `streamhub-dev-server`, `streamhub-codedeploy` |
+| S3 bucket (uploads)    | `streamhub-dev-uploads-<ACCOUNT_ID>` (step 10)                            |
 | EC2 tags               | `Application=streamhub`, `Environment=dev`                                |
 
 Policy files are in `infra/aws/`. Before pasting one, replace `<ACCOUNT_ID>` with your 12-digit account ID (top-right menu in the console).
@@ -91,7 +92,7 @@ EC2 > Launch instance:
 - Storage: 16 GiB gp3, **encrypted**.
 - Advanced details:
   - IAM instance profile `streamhub-dev-server`.
-  - Metadata version **V2 only**, metadata response **hop limit 1** (containers cannot reach the instance's credentials).
+  - Metadata version **V2 only**, metadata response **hop limit 1** (containers cannot reach the instance's credentials). Phase 4b raises it to 2, see step 10.
   - User data: paste `infra/aws/dev-server/user-data.sh`.
 
 After about 3 minutes: select the instance > Connect > **Session Manager** > Connect, then check:
@@ -144,6 +145,8 @@ Repository > Settings:
    | `CODEDEPLOY_APPLICATION` | `streamhub`                                              |
    | `CODEDEPLOY_GROUP`       | `streamhub-dev`                                          |
 
+3. **Secrets** tab: `AWS_ACCOUNT_ID` = your 12-digit account ID. It is not really a secret, but the deploy job references it so the runner masks it (`***`) in every line of the public logs, including the step headers that the AWS action's own masking cannot reach.
+
 ## 9. First deployment
 
 1. Commit the pipeline on a branch, open a pull request to `main`. The **CI** workflow runs; wait for both jobs to be green.
@@ -177,9 +180,26 @@ Repository > Settings:
 
 6. Prove the rollback works once: on a branch, change the readiness URL in `deploy/dev/hooks/validate-service.sh` to a path that does not exist, merge, and watch the deployment fail and roll back while the old version keeps serving. Revert afterwards.
 
+## 10. Uploads bucket (Phase 4b)
+
+Do all of this **before merging Phase 4b**: until `S3_BUCKET_UPLOADS` exists in SSM the deploy stops at AfterInstall (by design), and without the IAM statements and hop limit the API cannot reach the bucket.
+
+1. **Bucket.** S3 > Create bucket `streamhub-dev-uploads-<ACCOUNT_ID>`: Block **all** public access, Object Ownership **Bucket owner enforced**, encryption SSE-S3, versioning off.
+2. **CORS** (the browser PUTs parts straight to the bucket and must read the `ETag` header): bucket > Permissions > Cross-origin resource sharing > Edit > paste `infra/aws/s3/uploads-bucket.cors.json`. The only allowed origin is the dev web origin (`WEB_ORIGIN`); update both together when the web app gets a real domain.
+3. **Lifecycle** (safety net for abandoned uploads if the API's own expiry never runs): Management > Create lifecycle rule `abort-incomplete-uploads`, apply to all objects, action **Delete expired object delete markers or incomplete multipart uploads** > **Delete incomplete multipart uploads** after **1** day.
+4. **IAM.** Roles > `streamhub-dev-server` > inline policy `run-streamhub-dev` > Edit > JSON: replace it with the updated `infra/aws/iam/dev-server-role.permissions.json` (account ID filled in). The new statements allow object access under `videos/` only; no `s3:CreateBucket`, `s3:PutBucketPolicy` or access to other buckets.
+5. **SSM.** Create parameter `/streamhub/dev/S3_BUCKET_UPLOADS`, type **String** (not secret, but it holds the account ID and the repository is public), value: the bucket name.
+6. **Metadata hop limit 2** (ADR-045). EC2 > `streamhub-dev` > Actions > Instance settings > Modify instance metadata options: IMDSv2 **Required**, hop limit **2** > Save. The API container then gets the instance role's temporary credentials; there are no S3 keys anywhere. Known gap: every container on the host can now use the role. The production design gives only the API a role (ECS task role).
+
+Check from a Session Manager shell after the next deploy:
+
+```bash
+sudo docker logs streamhub-api-1 2>&1 | grep -E '"msg":"storage (reachable|not reachable)"'
+```
+
 ## Day-to-day
 
 - **Stop the instance** when you are not working (EC2 > Instance state > Stop). Containers restart on boot (`restart: unless-stopped`); a merge while it is stopped fails at the deploy step: start it and re-run the workflow.
 - Redeploy without a code change: Actions > Deploy (dev) > Run workflow.
 - Rotate a secret: update the parameter, then redeploy (the hook rewrites `/etc/streamhub/secrets.env`).
-- Tear everything down: delete the deployment group and application, terminate the instance, release the Elastic IP, delete the ECR repository, empty and delete the bucket, delete the parameters and the three roles and the OIDC provider, delete the Atlas user and access-list entry.
+- Tear everything down: delete the deployment group and application, terminate the instance, release the Elastic IP, delete the ECR repository, empty and delete both buckets, delete the parameters and the three roles and the OIDC provider, delete the Atlas user and access-list entry.

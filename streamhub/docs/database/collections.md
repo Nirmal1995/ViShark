@@ -109,21 +109,43 @@ Status changes follow the state machines in `packages/shared/src/video-status.ts
 | `{ createdAt: -1 }`                                              | the management list                       |
 | text index on `title` (weight 3) and `description`               | `q` search                                |
 
+## uploads
+
+One multipart upload per video (Phase 4b, ADR-044). The file goes from the browser straight to object storage; this document tracks the upload and its deadline.
+
+| Field                    | Type     | Notes                                                                             |
+| ------------------------ | -------- | --------------------------------------------------------------------------------- |
+| `videoId`                | ObjectId | unique: one upload per video, ever                                                |
+| `createdBy`              | ObjectId | the administrator                                                                 |
+| `bucket`, `key`          | string   | generated key `videos/<videoId>/source/<uuid>`; never returned by the API         |
+| `storageUploadId`        | string   | the S3 multipart `UploadId`; server-side only                                     |
+| `mimeType`               | string   | `video/mp4`, `video/quicktime` or `video/webm`                                    |
+| `sizeBytes`              | number   | declared size; the stored object must match exactly                               |
+| `partSizeBytes`          | number   | every part except the last has this size                                          |
+| `partCount`              | number   |                                                                                   |
+| `status`                 | string   | `ACTIVE`, `COMPLETING` (short claim), `COMPLETED`, `ABORTED`, `EXPIRED`, `FAILED` |
+| `expiresAt`              | Date     | default 24 hours after start; the sweep expires it afterwards                     |
+| `completedAt`            | Date     |                                                                                   |
+| `failureReason`          | string   | why it was rejected or ended                                                      |
+| `createdAt`, `updatedAt` | Date     |                                                                                   |
+
+Indexes: `{ videoId }` unique, `{ status, expiresAt }` (the expiry sweep).
+
 ## auditLogs
 
 Append-only record of privileged changes. The application never updates or deletes these documents.
 
-| Field        | Type             | Notes                                                                                                                  |
-| ------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `actorId`    | ObjectId \| null | the administrator; `null` for server-side tools                                                                        |
-| `via`        | `api` \| `cli`   |                                                                                                                        |
-| `action`     | string           | for example `video.published`, `category.deleted`, `admin.created`                                                     |
-| `targetType` | string           | `video`, `category`, `user`                                                                                            |
-| `targetId`   | ObjectId \| null |                                                                                                                        |
-| `details`    | object           | a few non-sensitive values chosen by the code (old and new status, a title); never request bodies, passwords or tokens |
-| `requestId`  | string \| null   | links the record to the request logs                                                                                   |
-| `ip`         | string \| null   |                                                                                                                        |
-| `createdAt`  | Date             |                                                                                                                        |
+| Field        | Type                       | Notes                                                                                                                  |
+| ------------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `actorId`    | ObjectId \| null           | the administrator; `null` for server-side tools                                                                        |
+| `via`        | `api` \| `cli` \| `system` | `system`: background jobs such as upload expiry                                                                        |
+| `action`     | string                     | for example `video.published`, `video.upload_completed`, `video.upload_rejected`, `admin.created`                      |
+| `targetType` | string                     | `video`, `category`, `user`                                                                                            |
+| `targetId`   | ObjectId \| null           |                                                                                                                        |
+| `details`    | object                     | a few non-sensitive values chosen by the code (old and new status, a title); never request bodies, passwords or tokens |
+| `requestId`  | string \| null             | links the record to the request logs                                                                                   |
+| `ip`         | string \| null             |                                                                                                                        |
+| `createdAt`  | Date                       |                                                                                                                        |
 
 Indexes: `{ createdAt: -1 }`, `{ targetId, createdAt: -1 }`, `{ actorId, createdAt: -1 }`, `{ action, createdAt: -1 }`. No TTL: retention is a policy decision (for a real service, typically one year or more, archived to cheaper storage).
 
@@ -133,6 +155,7 @@ Indexes: `{ createdAt: -1 }`, `{ targetId, createdAt: -1 }`, `{ actorId, created
 users 1 ──── * sessions                  (session.userId → users._id as string)
 users 1 ──── * emailVerificationTokens   (userId)
 users 1 ──── * passwordResetTokens       (userId)
+videos 1 ─── 0..1 uploads                (videoId, unique)
 users 1 ──── * videos                    (ownerId)
 categories 1 ──── * videos               (categoryId)
 users 1 ──── * auditLogs                 (actorId)

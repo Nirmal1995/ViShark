@@ -2,7 +2,7 @@
 
 A video streaming platform built as a production-oriented engineering project: React, Node.js, MongoDB, S3-compatible object storage, FFmpeg/HLS, Redis/BullMQ, Docker, with AWS deployment planned for a later stage.
 
-> **Status: Phase 4a (categories and video records).** Monorepo tooling, local infrastructure, the API foundation, full authentication (sessions, CSRF, RBAC, email flows, admin two-factor), categories, video records with validated status changes, the catalogue and an audit log, plus CI/CD with GitHub Actions to an AWS dev environment. Uploads (4b), streaming, the worker and the web app come next. See [the roadmap](docs/architecture/phase-0-environment-and-plan.md#5-implementation-roadmap).
+> **Status: Phase 4b (uploads).** Monorepo tooling, local infrastructure, the API foundation, full authentication (sessions, CSRF, RBAC, email flows, admin two-factor), categories, video records with validated status changes, the catalogue, an audit log, and direct-to-storage multipart uploads with verification and expiry, plus CI/CD with GitHub Actions to an AWS dev environment. The worker (transcoding), streaming and the web app come next. See [the roadmap](docs/architecture/phase-0-environment-and-plan.md#5-implementation-roadmap).
 
 ## Prerequisites
 
