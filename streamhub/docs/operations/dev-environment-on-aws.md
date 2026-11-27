@@ -57,11 +57,13 @@ IAM > Identity providers > Add provider > **OpenID Connect**: provider URL `http
 
 IAM > Roles > Create role > **Custom trust policy** > paste `infra/aws/iam/github-deploy-role.trust.json`. Skip managed policies, name it `streamhub-github-deploy`. Then Add permissions > Create inline policy > JSON > paste `infra/aws/iam/github-deploy-role.permissions.json`, name `deploy-dev`.
 
-Read the trust policy before saving: only workflow runs on the `main` branch of `Nirmal1995/ViShark` can assume this role. A fork, another branch or another repository gets "access denied".
+Read the trust policy before saving: only workflow runs on the `main` branch of `Nirmal1995/ViShark` can assume this role. A fork, another branch or another repository gets "access denied". The subject contains the owner and repository IDs (`Nirmal1995@97385213/ViShark@1452920948`); if a deploy fails with "Not authorized to perform sts:AssumeRoleWithWebIdentity", look up the failed `AssumeRoleWithWebIdentity` event in CloudTrail: its `userIdentity.userName` is the exact subject GitHub sent.
 
 ### 4c. Dev server role (used by the EC2 instance)
 
 Create role > AWS service > **EC2** (this creates the trust policy in `dev-server-role.trust.json`) > attach managed policy **AmazonSSMManagedInstanceCore** > name `streamhub-dev-server`. Then add the inline policy `infra/aws/iam/dev-server-role.permissions.json`, name `run-streamhub-dev`.
+
+Check before moving on: the role must show **two** policies, `AmazonSSMManagedInstanceCore` (managed) and `run-streamhub-dev` (inline). Without the managed one the SSM agent never registers, and the system log shows a misleading error about Default Host Management ("instance management role is not configured"). Do not enable Default Host Management to fix it: the deploy hooks use the instance role anyway. Note that `AmazonSSMManagedInstanceCore` allows `ssm:GetParameter` on every parameter in the account; acceptable for an account used only by this project, otherwise replace it with a narrower copy.
 
 SecureString parameters encrypted with the AWS managed key `aws/ssm` need no extra KMS permission. With your own KMS key you would add `kms:Decrypt` on that key, with the condition `kms:ViaService = ssm.eu-west-1.amazonaws.com`.
 

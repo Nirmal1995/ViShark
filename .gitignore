@@ -19,3 +19,9 @@ phase0/*-report.txt
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Dependencies belong to streamhub/ (pnpm workspace); never at the repository root.
+node_modules/
+/package.json
+/package-lock.json
+/pnpm-lock.yaml

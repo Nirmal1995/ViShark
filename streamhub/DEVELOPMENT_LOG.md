@@ -391,8 +391,19 @@ Phase 4 split into 4a (metadata, lifecycle, catalogue, audit) and 4b (storage ab
 
 | Criterion                                                                   | Result (sandbox) | Result (owner) |
 | --------------------------------------------------------------------------- | ---------------- | -------------- |
-| Admin creates categories and draft videos; viewers cannot                   | pass             | pending        |
-| Publishing requires processing READY; invalid transitions return 409        | pass             | pending        |
-| Catalogue shows only published, ready, public videos; pagination is bounded | pass             | pending        |
-| Every privileged change appears in `GET /admin/audit-logs`                  | pass             | pending        |
-| CI green on the pull request                                                | n/a              | pending        |
+| Admin creates categories and draft videos; viewers cannot                   | pass             | pass           |
+| Publishing requires processing READY; invalid transitions return 409        | pass             | pass           |
+| Catalogue shows only published, ready, public videos; pagination is bounded | pass             | pass           |
+| Every privileged change appears in `GET /admin/audit-logs`                  | pass             | pass           |
+| CI green on the pull request                                                | n/a              | pass (PR #2)   |
+
+## AWS dev environment: first deployment (2026-11-27)
+
+The owner built the dev environment by hand from `docs/operations/dev-environment-on-aws.md`. Deployment `d-2ZL5OXFSM` (run 45930967003) was the first green end-to-end run: CI, image by digest, OIDC, ECR, S3, CodeDeploy, migration, `compose up`, readiness check.
+
+### Problems found on the way
+
+1. **SSM agent never registered.** The system log blamed Default Host Management ("instance management role is not configured"), but the real cause was the dev server role missing `AmazonSSMManagedInstanceCore`; CloudShell (`list-attached-role-policies`) showed it. Default Host Management was deliberately not enabled: the deploy hooks need the instance role anyway. The runbook now says to check for both policies.
+2. **OIDC "Not authorized to perform sts:AssumeRoleWithWebIdentity".** Provider, audience and trust policy all looked right. The failed `AssumeRoleWithWebIdentity` event in CloudTrail showed the subject GitHub actually sent: `repo:Nirmal1995@97385213/ViShark@1452920948:ref:refs/heads/main` (owner and repository IDs included). The trust policy and docs now use that subject; it also stops a re-created repository with the same name from assuming the role.
+3. **`db:migrate` failed with "not allowed to do action [createIndex] on [test.sessions]".** The Atlas connection string had no database name, so the driver used `test`, where the least-privilege user has no rights. Config validation now rejects a `MONGO_URL` without a database name.
+4. The deploy logs are public (public repository); the AWS credentials step now masks the account ID.

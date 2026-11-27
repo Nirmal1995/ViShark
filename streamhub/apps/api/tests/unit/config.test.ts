@@ -14,6 +14,20 @@ const productionBase = {
 };
 
 describe('loadConfig', () => {
+  it('rejects a MONGO_URL without a database name', () => {
+    for (const url of [
+      'mongodb+srv://u:p@cluster0.abc.mongodb.net/?retryWrites=true',
+      'mongodb+srv://u:p@cluster0.abc.mongodb.net?retryWrites=true',
+      'mongodb://u:p@127.0.0.1:27017',
+    ]) {
+      expect(() => loadConfig({ ...base, MONGO_URL: url })).toThrowError(/MONGO_URL/);
+    }
+    expect(
+      loadConfig({ ...base, MONGO_URL: 'mongodb+srv://u:p@c.abc.mongodb.net/streamhub?w=majority' })
+        .MONGO_URL,
+    ).toContain('/streamhub?');
+  });
+
   it('applies defaults for optional values', () => {
     const config = loadConfig({ ...base });
     expect(config.API_PORT).toBe(4000);
