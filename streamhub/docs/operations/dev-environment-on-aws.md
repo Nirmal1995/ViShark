@@ -199,6 +199,13 @@ sudo docker logs streamhub-api-1 2>&1 | grep -E '"msg":"storage (reachable|not r
 
 ## Day-to-day
 
+**Check uploads and playback end to end** (no web app needed): from a Session Manager shell on the server, fetch `scripts/dev/upload-and-play.sh` from the repository and run it with an administrator account and any MP4. It signs in, uploads the file in parts straight to S3 with the pre-signed URLs, completes and verifies the upload, checks a range request (`206`) and prints a signed URL you can open in a browser to watch the video.
+
+```bash
+curl -fsSLo upload-and-play.sh https://raw.githubusercontent.com/Nirmal1995/ViShark/main/streamhub/scripts/dev/upload-and-play.sh
+bash upload-and-play.sh admin@example.com ./clip.mp4
+```
+
 - **Stop the instance** when you are not working (EC2 > Instance state > Stop). Containers restart on boot (`restart: unless-stopped`); a merge while it is stopped fails at the deploy step: start it and re-run the workflow.
 - Redeploy without a code change: Actions > Deploy (dev) > Run workflow.
 - Rotate a secret: update the parameter, then redeploy (the hook rewrites `/etc/streamhub/secrets.env`).
