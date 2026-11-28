@@ -17,10 +17,10 @@ import { CategoryModel } from '../categories/category.model.ts';
 import { toAdminVideoDto, toCatalogueVideoDto } from './video.dto.ts';
 import { VideoModel, type Video } from './video.model.ts';
 
-type LeanVideo = Video & { _id: Types.ObjectId; createdAt: Date; updatedAt: Date };
+export type LeanVideo = Video & { _id: Types.ObjectId; createdAt: Date; updatedAt: Date };
 
 /** What a viewer may watch: published, processed, not deleted. Visibility only affects listing. */
-const WATCHABLE = {
+export const WATCHABLE = {
   deletedAt: null,
   publicationStatus: 'PUBLISHED' as const,
   processingStatus: 'READY' as const,
@@ -41,7 +41,7 @@ async function assertCategory(categoryId: string | null | undefined): Promise<vo
 }
 
 /** Loads the categories for a page of videos in one query, instead of one per video. */
-async function withCategories(videos: LeanVideo[]) {
+export async function withCategories(videos: LeanVideo[]) {
   const ids = [...new Set(videos.map((v) => v.categoryId?.toString()).filter(Boolean))];
   const categories = ids.length
     ? await CategoryModel.find({ _id: mongoose.trusted({ $in: ids }) })

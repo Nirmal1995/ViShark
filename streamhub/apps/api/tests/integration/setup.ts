@@ -16,6 +16,7 @@ import {
   S3ObjectStorage,
   type ObjectStorage,
 } from '../../src/infrastructure/storage.ts';
+import { createPlaybackService } from '../../src/modules/playback/playback.service.ts';
 import {
   createUploadsService,
   type UploadsService,
@@ -134,7 +135,11 @@ export function buildAuthApp(options: {
     ...(options.policy ? { policy: options.policy } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
-  auth.routes.push(...catalogRoutes({ uploads }), ...(options.extraRoutes ?? []));
+  const playback = createPlaybackService({ storage: testStorage(config), config });
+  auth.routes.push(
+    ...catalogRoutes({ uploads, playback, redis: options.redis }),
+    ...(options.extraRoutes ?? []),
+  );
   return createApp({
     config: { ...config, API_DOCS_ENABLED: false },
     logger: silentLogger,

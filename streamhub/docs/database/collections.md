@@ -131,6 +131,30 @@ One multipart upload per video (Phase 4b, ADR-044). The file goes from the brows
 
 Indexes: `{ videoId }` unique, `{ status, expiresAt }` (the expiry sweep).
 
+## watchProgress
+
+One document per user and video, overwritten by the player's position reports (Phase 5, ADR-046).
+
+| Field                    | Type     | Notes                                                           |
+| ------------------------ | -------- | --------------------------------------------------------------- |
+| `userId`, `videoId`      | ObjectId | unique together                                                 |
+| `positionSeconds`        | number   | clamped to the duration when it is known                        |
+| `completed`              | boolean  | at 95% of the duration; a finished video resumes from the start |
+| `createdAt`, `updatedAt` | Date     | `updatedAt` orders the history                                  |
+
+Indexes: `{ userId, videoId }` unique, `{ userId, updatedAt: -1 }` (history, newest first).
+
+## favourites
+
+| Field               | Type     | Notes                                   |
+| ------------------- | -------- | --------------------------------------- |
+| `userId`, `videoId` | ObjectId | unique together, so "add" is idempotent |
+| `createdAt`         | Date     | orders the list                         |
+
+Indexes: `{ userId, videoId }` unique, `{ userId, createdAt: -1 }`.
+
+History and favourites only list videos the user can still watch (published, `READY`, not deleted); the rest stay stored and reappear if a video is published again.
+
 ## auditLogs
 
 Append-only record of privileged changes. The application never updates or deletes these documents.
@@ -156,6 +180,8 @@ users 1 ──── * sessions                  (session.userId → users._id a
 users 1 ──── * emailVerificationTokens   (userId)
 users 1 ──── * passwordResetTokens       (userId)
 videos 1 ─── 0..1 uploads                (videoId, unique)
+users  1 ──── * watchProgress            (userId; one per video)
+users  1 ──── * favourites               (userId; one per video)
 users 1 ──── * videos                    (ownerId)
 categories 1 ──── * videos               (categoryId)
 users 1 ──── * auditLogs                 (actorId)

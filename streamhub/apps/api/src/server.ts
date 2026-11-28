@@ -14,6 +14,7 @@ import { createAuthModule } from './modules/auth/index.ts';
 import { catalogRoutes } from './modules/catalog.ts';
 import { ensureIndexes } from './database/indexes.ts';
 import { HealthService } from './modules/health/health.service.ts';
+import { createPlaybackService } from './modules/playback/playback.service.ts';
 import { createUploadsService } from './modules/uploads/uploads.service.ts';
 
 /** How often abandoned uploads are cleaned up. */
@@ -69,7 +70,8 @@ function main(): void {
       logger.error({ err, bucket: uploadsStorage.bucket }, 'storage not reachable'),
     );
   const uploads = createUploadsService({ storage: uploadsStorage, config, logger });
-  auth.routes.push(...catalogRoutes({ uploads }));
+  const playback = createPlaybackService({ storage: uploadsStorage, config });
+  auth.routes.push(...catalogRoutes({ uploads, playback, redis }));
 
   const app = createApp({ config, logger, health, metrics, auth, version: VERSION });
 

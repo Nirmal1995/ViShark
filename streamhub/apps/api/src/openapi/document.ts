@@ -32,6 +32,11 @@ import {
   uploadDtoSchema,
   uploadPartUrlsBodySchema,
   uploadSessionDtoSchema,
+  favouriteDtoSchema,
+  paginationQuerySchema,
+  historyEntryDtoSchema,
+  playbackDtoSchema,
+  progressBodySchema,
 } from '@streamhub/contracts';
 import { z } from 'zod';
 
@@ -210,6 +215,11 @@ export function buildOpenApiDocument(version: string) {
           'The catalogue for signed-in users, and video management for administrators. Status rules: publishing requires processing READY; see the error details of INVALID_TRANSITION.',
       },
       { name: 'admin', description: 'Administration: all videos, audit logs' },
+      {
+        name: 'library',
+        description:
+          'Playback (signed media URLs), watch progress and history, favourites. Storage serves the bytes, including range requests.',
+      },
       {
         name: 'uploads',
         description:
@@ -745,6 +755,93 @@ export function buildOpenApiDocument(version: string) {
           },
         },
       },
+      '/api/v1/videos/{id}/playback': {
+        get: {
+          tags: ['library'],
+          summary: 'Get a signed media URL',
+          description:
+            'Published, processed videos for everyone signed in; administrators can also preview a verified upload (preview: true). The URL supports range requests (206) and expires at expiresAt: ask again then, or when the player gets a 403. Includes the resume position. 60 per minute per user.',
+          security: sessionOnly,
+          parameters: [idParam],
+          responses: {
+            '200': { description: 'Playback details', content: dataOf(ref('PlaybackDto')) },
+            ...errors('401', '403', '404', '429'),
+          },
+        },
+      },
+      '/api/v1/videos/{id}/progress': {
+        put: {
+          tags: ['library'],
+          summary: 'Save the playback position',
+          description:
+            'The player reports every 30 to 60 seconds. At 95% of the duration the video counts as finished and starts from the beginning next time. 30 per minute per user.',
+          security: authenticated,
+          parameters: [idParam],
+          requestBody: { required: true, content: json('ProgressBody') },
+          responses: {
+            '204': { description: 'Saved' },
+            ...errors('400', '401', '403', '404', '429'),
+          },
+        },
+      },
+      '/api/v1/videos/{id}/favourite': {
+        put: {
+          tags: ['library'],
+          summary: 'Add to favourites',
+          description: 'Idempotent. Only videos the user can watch.',
+          security: authenticated,
+          parameters: [idParam],
+          responses: { '204': { description: 'Saved' }, ...errors('401', '403', '404') },
+        },
+        delete: {
+          tags: ['library'],
+          summary: 'Remove from favourites',
+          description: 'Idempotent.',
+          security: authenticated,
+          parameters: [idParam],
+          responses: { '204': { description: 'Removed' }, ...errors('401', '403') },
+        },
+      },
+      '/api/v1/users/me/history': {
+        get: {
+          tags: ['library'],
+          summary: 'My watch history',
+          description:
+            'Newest first. Videos that are no longer watchable (unpublished, archived, deleted) are left out.',
+          security: sessionOnly,
+          parameters: queryParams(paginationQuerySchema),
+          responses: {
+            '200': {
+              description: 'A page of history entries',
+              content: pageOf('HistoryEntryDto'),
+            },
+            ...errors('400', '401', '403'),
+          },
+        },
+      },
+      '/api/v1/users/me/history/{id}': {
+        delete: {
+          tags: ['library'],
+          summary: 'Remove a video from my history',
+          description: 'Idempotent. `id` is the video id.',
+          security: authenticated,
+          parameters: [idParam],
+          responses: { '204': { description: 'Removed' }, ...errors('401', '403') },
+        },
+      },
+      '/api/v1/users/me/favourites': {
+        get: {
+          tags: ['library'],
+          summary: 'My favourites',
+          description: 'Newest first; videos that are no longer watchable are left out.',
+          security: sessionOnly,
+          parameters: queryParams(paginationQuerySchema),
+          responses: {
+            '200': { description: 'A page of favourites', content: pageOf('FavouriteDto') },
+            ...errors('400', '401', '403'),
+          },
+        },
+      },
       '/api/v1/admin/videos/{id}/upload': {
         post: {
           tags: ['uploads'],
@@ -912,6 +1009,10 @@ export function buildOpenApiDocument(version: string) {
         UploadDto: schema(uploadDtoSchema),
         UploadSessionDto: schema(uploadSessionDtoSchema),
         PartUrlsDto: schema(partUrlsDtoSchema),
+        ProgressBody: body(progressBodySchema),
+        PlaybackDto: schema(playbackDtoSchema),
+        HistoryEntryDto: schema(historyEntryDtoSchema),
+        FavouriteDto: schema(favouriteDtoSchema),
         MfaSetupBody: body(mfaSetupBodySchema),
         MfaEnableBody: body(mfaEnableBodySchema),
         MfaVerifyBody: body(mfaVerifyBodySchema),
