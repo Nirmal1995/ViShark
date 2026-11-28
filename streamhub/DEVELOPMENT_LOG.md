@@ -471,3 +471,12 @@ The owner chose playback before the worker, so the worker's output can be checke
 | Unauthorised requests rejected (`401`, `404` for drafts) | pass             | pending        |
 | Tampered and expired URLs rejected                       | CI only          | pending        |
 | Resume position saved and returned                       | pass             | pending        |
+
+### Owner check on the dev server (2026-11-28)
+
+The first run of `scripts/dev/upload-and-play.sh` on the dev server signed in, then got `401` on the next request. Two causes, both about the session cookie being `Secure` in production:
+
+1. The API sat behind no trusted proxy (`API_TRUST_PROXY_HOPS=0`), so over the plain-HTTP hop to `127.0.0.1:4000` Express treated every request as insecure and `express-session` never issued the cookie. Nobody could sign in on the dev server at all; the deploy's health checks did not need a session, so nothing noticed. Fix: `API_TRUST_PROXY_HOPS=1` in `deploy/dev/api.env`. TLS will end at the edge (Cloudflare Tunnel), and only the host can reach the published port.
+2. curl does not send a `Secure` cookie back over plain HTTP, even to localhost. The script now keeps the cookie by hand and sends `X-Forwarded-Proto: https`, which is what the edge proxy will send.
+
+Reproduced and fixed in the sandbox by running the API with production settings: before, `401` after sign-in; after, a two-part upload, verification and a `206` range response.
