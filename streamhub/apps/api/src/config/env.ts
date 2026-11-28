@@ -139,6 +139,10 @@ const envSchema = z
       .default(16 * 1024 * 1024),
     UPLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
     UPLOAD_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(72).default(24),
+
+    // Playback (Phase 5): how long a signed media URL works. Long enough for a
+    // film with seeking; the player asks for a new URL when one expires.
+    PLAYBACK_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(43_200).default(3600),
   })
   .transform((env) => ({
     ...env,

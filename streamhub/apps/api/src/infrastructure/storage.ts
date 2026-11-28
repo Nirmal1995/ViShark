@@ -43,6 +43,12 @@ export interface ObjectStorage {
   readRange(key: string, start: number, endInclusive: number): Promise<Uint8Array>;
   /** Idempotent. */
   delete(key: string): Promise<void>;
+  /**
+   * A time-limited GET URL. Storage itself serves byte ranges (206), so the
+   * API never streams video. With role credentials the URL also stops working
+   * when those temporary credentials expire (a few hours on EC2).
+   */
+  presignGet(key: string, expiresInSeconds: number): Promise<string>;
   /** Throws if the bucket is unreachable or access is denied. */
   ping(): Promise<void>;
 }
@@ -195,6 +201,20 @@ export class S3ObjectStorage implements ObjectStorage {
     } catch (err) {
       if (!isNotFound(err)) throw err;
     }
+  }
+
+  presignGet(key: string, expiresInSeconds: number): Promise<string> {
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseContentDisposition: 'inline',
+        // Private, per-user URLs: browsers may cache, shared caches must not.
+        ResponseCacheControl: 'private, max-age=3600',
+      }),
+      { expiresIn: expiresInSeconds },
+    );
   }
 
   async ping(): Promise<void> {

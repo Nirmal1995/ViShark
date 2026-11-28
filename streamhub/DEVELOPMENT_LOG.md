@@ -432,10 +432,42 @@ The owner built the dev environment by hand from `docs/operations/dev-environmen
 
 ### Acceptance criteria
 
-| Criterion                                                             | Result (sandbox) | Result (owner) |
-| --------------------------------------------------------------------- | ---------------- | -------------- |
-| A real file uploads to storage end to end through the API             | pass             | pending        |
-| Wrong size or a non-video file is rejected and deleted                | pass             | pending        |
-| Invalid transitions are rejected (double start, complete after abort) | pass             | pending        |
-| Abort and expiry clean up storage and end the video                   | pass             | pending        |
-| Dev server: storage reachable through the instance role               | n/a              | pending        |
+| Criterion                                                             | Result (sandbox) | Result (owner)                                     |
+| --------------------------------------------------------------------- | ---------------- | -------------------------------------------------- |
+| A real file uploads to storage end to end through the API             | pass             | pass (CI, PR #4)                                   |
+| Wrong size or a non-video file is rejected and deleted                | pass             | pass (CI, PR #4)                                   |
+| Invalid transitions are rejected (double start, complete after abort) | pass             | pass (CI, PR #4)                                   |
+| Abort and expiry clean up storage and end the video                   | pass             | pass (CI, PR #4)                                   |
+| Dev server: storage reachable through the instance role               | n/a              | pass (`storage reachable`, deployment d-71E8ZNQSM) |
+
+## Phase 5: playback, watch history and favourites (2026-11-27)
+
+The owner chose playback before the worker, so the worker's output can be checked in a player as soon as it exists.
+
+### What was built
+
+- `GET /videos/{id}/playback`: authorises and returns a signed storage URL (1 hour, `PLAYBACK_URL_TTL_SECONDS`), the resume position and `preview`. Storage serves ranges (`206`) and rejects tampered or expired URLs. Viewers: published and `READY`; administrators also preview verified uploads, which makes uploads testable before Phase 6. Everything else `404`. 60 per minute per user.
+- `PUT /videos/{id}/progress` (30 per minute per user), `GET /users/me/history`, `DELETE /users/me/history/{id}`; 95% counts as finished.
+- `PUT` and `DELETE /videos/{id}/favourite` (idempotent), `GET /users/me/favourites`.
+- History and favourites hide videos that are no longer watchable, filtered in the database so paging stays correct.
+- `watchProgress` and `favourites` collections; OpenAPI tag `library`; ADR-046.
+- No AWS change: the dev server role can already read `videos/*` in the uploads bucket, which is all a signed GET needs.
+
+### Errors encountered
+
+1. The sandbox S3 emulator does not check signatures on pre-signed URLs at all (it answers `200` for tampered and expired URLs, and crashes when signature checks are switched on). The "storage rejects tampered and expired URLs" test therefore fails in the sandbox; it runs for real in CI, where the MinIO-compatible storage enforces SigV4.
+2. Two lint findings (type-only import, unnecessary assertion) and one formatting fix.
+
+### Validation done in the assistant sandbox
+
+- `pnpm check`: 130 API unit, 27 contracts (new: progress body), 23 shared.
+- Integration: 136 of 137 pass against MongoDB, Redis, Mailpit and the emulator: 401 when signed out; admin preview of a verified upload with real `206` range responses (middle and tail) and a full `200`; viewer `404` until published and `READY`, admin `404` after delete; no file means no playback; progress, resume, history order and paging, per-user separation; finished at 95% and clamped to the duration; invalid positions `400`; unwatchable videos `404`; history and favourites removal (idempotent) and hiding of unpublished and archived videos. The one failure is the emulator limitation above.
+
+### Acceptance criteria
+
+| Criterion                                                | Result (sandbox) | Result (owner) |
+| -------------------------------------------------------- | ---------------- | -------------- |
+| `206` with correct `Content-Range` for range requests    | pass             | pending        |
+| Unauthorised requests rejected (`401`, `404` for drafts) | pass             | pending        |
+| Tampered and expired URLs rejected                       | CI only          | pending        |
+| Resume position saved and returned                       | pass             | pending        |

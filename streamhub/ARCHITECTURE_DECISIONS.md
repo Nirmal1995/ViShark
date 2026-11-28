@@ -374,3 +374,13 @@ Status: Accepted for dev; to be replaced
 - Context: the dev server enforces IMDSv2 with a hop limit of 1, so containers cannot reach the instance role's credentials. The API container now needs them for S3.
 - Decision: raise the hop limit to 2 on the dev server. Simple and keeps "no S3 keys anywhere".
 - Consequences: every container on the host (Redis and Mailpit too) can obtain the role's credentials. The role is narrow (one bucket prefix, one ECR repository, the `/streamhub/dev/` parameters), but this is broader than necessary. Production answer, planned as its own infrastructure phase: run the API on ECS with a task role, so only the API gets S3 access, and the host role keeps hop limit 1.
+
+## ADR-046: Playback through signed storage URLs; the API never streams video
+
+Status: Accepted (Phase 5)
+
+- Context: playback needs range requests (seeking, `206 Partial Content`) and must stop unauthorised viewers. Streaming bytes through the API would tie up the t3.micro and duplicate what storage and CDNs already do well.
+- Decision: `GET /videos/{id}/playback` authorises the request and returns a signed GET URL (1 hour by default, `PLAYBACK_URL_TTL_SECONDS`). Storage serves the bytes and handles ranges and expiry; a tampered or expired URL gets `403` from storage itself. Until the worker exists (Phase 6) the URL points at the uploaded source file (`kind: source`); HLS through the CDN replaces it later without changing the endpoint. Viewers may play published, `READY` videos; `video:manage` may also preview a verified upload (`preview: true`), which is how uploads are checked before publishing. Everything else is `404`.
+- With role credentials a signed URL also stops working when the role's temporary credentials expire (a few hours on EC2); the player simply asks for a new URL, as it does after `expiresAt`.
+- Watch progress: one document per user and video, upserted by the player every 30 to 60 seconds (rate-limited); 95% of the duration counts as finished. History and favourites list only videos the user can still watch, filtered in the database (`$lookup`), so paging stays correct.
+- Consequences: no CORS change is needed for a plain `<video>` element; HLS players that fetch segments with JavaScript will need `GET` in the bucket's CORS rules (Phase 6/7). The progress heartbeat also keeps the session active, which is part of the session-lifetime work left open in ADR-043.
