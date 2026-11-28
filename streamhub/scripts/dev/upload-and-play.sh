@@ -11,12 +11,18 @@
 #   API     http://localhost:4000/api/v1
 #   ORIGIN  http://localhost:4000      must be a trusted origin (CSRF check)
 #
+# In production the API only issues its Secure session cookie over HTTPS. On
+# the dev server TLS will end at the edge (Cloudflare Tunnel), so the API
+# trusts one proxy hop and this script says what that proxy would say:
+# X-Forwarded-Proto: https. Set FORWARDED_PROTO= (empty) to leave it out.
+#
 # The password (and a two-factor code, if enabled) is read with a hidden
 # prompt and never appears in the process list, the shell history or a file.
 set -euo pipefail
 
 API="${API:-http://localhost:4000/api/v1}"
 ORIGIN="${ORIGIN:-http://localhost:4000}"
+FORWARDED_PROTO="${FORWARDED_PROTO-https}"
 EMAIL="${1:?usage: $0 <admin-email> <video-file>}"
 FILE="${2:?usage: $0 <admin-email> <video-file>}"
 [[ -f "$FILE" ]] || { echo "no such file: $FILE" >&2; exit 1; }
@@ -31,18 +37,26 @@ SIZE=$(stat -c %s "$FILE")
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-JAR="$WORK/cookies"
 CSRF=""
 
 # field <python expression on d> < json
 field() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 api() { # api METHOD PATH [JSON-BODY-ON-STDIN]
-  local method=$1 path=$2
-  local args=(-sS -X "$method" -c "$JAR" -b "$JAR" -H "Origin: $ORIGIN" -H 'Content-Type: application/json')
+  # Cookies are handled by hand: the session cookie is Secure (__Host-), and
+  # curl will not send a Secure cookie back over plain http, even to localhost.
+  local method=$1 path=$2 out
+  local args=(-sS -X "$method" -D "$WORK/headers" -H "Origin: $ORIGIN" -H 'Content-Type: application/json')
+  [[ -s "$WORK/cookie" ]] && args+=(-H "Cookie: $(<"$WORK/cookie")")
   [[ -n "$CSRF" ]] && args+=(-H "X-CSRF-Token: $CSRF")
+  [[ -n "$FORWARDED_PROTO" ]] && args+=(-H "X-Forwarded-Proto: $FORWARDED_PROTO")
   [[ "$method" != GET ]] && args+=(--data-binary @-)
-  curl "${args[@]}" -w '\n%{http_code}' "$API$path"
+  out=$(curl "${args[@]}" -w '\n%{http_code}' "$API$path")
+  # The session ID changes at sign-in (and after two-factor): keep the latest.
+  local cookie
+  cookie=$(tr -d '\r' <"$WORK/headers" | awk 'tolower($1) == "set-cookie:" { print $2 }' | sed 's/;.*//' | tail -n1)
+  [[ -n "$cookie" ]] && printf '%s' "$cookie" >"$WORK/cookie"
+  printf '%s\n' "$out"
 }
 
 check() { # check EXPECTED-STATUS RESPONSE  -> prints the body
@@ -74,7 +88,8 @@ echo "signed in as $EMAIL"
 
 title="Upload check $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 video=$(printf '{"title":"%s"}' "$title" | api POST /videos)
-VIDEO_ID=$(check 201 "$video" | field 'd["data"]["id"]')
+video=$(check 201 "$video")
+VIDEO_ID=$(field 'd["data"]["id"]' <<<"$video")
 echo "video $VIDEO_ID created (draft)"
 
 session=$(printf '{"sizeBytes":%s,"mimeType":"%s"}' "$SIZE" "$MIME" | api POST "/admin/videos/$VIDEO_ID/upload")
@@ -100,7 +115,8 @@ done_=$(api POST "/admin/videos/$VIDEO_ID/upload/complete" <<<"$parts")
 check 200 "$done_" >/dev/null
 echo "upload completed and verified (size and file type)"
 
-playback=$(check 200 "$(api GET "/videos/$VIDEO_ID/playback")")
+playback=$(api GET "/videos/$VIDEO_ID/playback")
+playback=$(check 200 "$playback")
 URL=$(field 'd["data"]["url"]' <<<"$playback")
 echo "playback (preview=$(field 'd["data"]["preview"]' <<<"$playback"), expires $(field 'd["data"]["expiresAt"]' <<<"$playback"))"
 
