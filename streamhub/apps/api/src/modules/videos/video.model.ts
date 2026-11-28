@@ -38,6 +38,23 @@ const videoSchema = new Schema(
     width: { type: Number, default: null, min: 0 },
     height: { type: Number, default: null, min: 0 },
     failureReason: { type: String, default: null, maxlength: 300 },
+    /** HLS output in the media bucket, written by the worker (Phase 6). */
+    hlsPrefix: { type: String, default: null },
+    hlsMasterKey: { type: String, default: null },
+    renditions: {
+      type: [
+        new Schema(
+          {
+            name: { type: String, required: true },
+            width: { type: Number, required: true },
+            height: { type: Number, required: true },
+            bandwidth: { type: Number, required: true },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
     publishedAt: { type: Date, default: null },
     deletedAt: { type: Date, default: null },
   },

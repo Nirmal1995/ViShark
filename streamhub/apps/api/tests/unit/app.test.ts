@@ -122,6 +122,8 @@ describe('versioned API and docs', () => {
       '/api/v1/admin/videos/{id}/upload/complete',
       '/api/v1/admin/videos/{id}/upload/abort',
       '/api/v1/videos/{id}/playback',
+      '/api/v1/videos/{id}/hls/master.m3u8',
+      '/api/v1/videos/{id}/hls/{rendition}/index.m3u8',
       '/api/v1/videos/{id}/progress',
       '/api/v1/videos/{id}/favourite',
       '/api/v1/users/me/history',

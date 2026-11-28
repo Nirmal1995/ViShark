@@ -122,6 +122,15 @@ const envSchema = z
       .string()
       .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'must be a valid bucket name')
       .optional(),
+    /**
+     * Transcoded output (HLS and posters), written by the worker. Optional in
+     * production until the media bucket exists: without it, playback stays on
+     * the uploaded source file.
+     */
+    S3_BUCKET_MEDIA: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, 'must be a valid bucket name')
+      .optional(),
 
     // Uploads. Parts must be at least 5 MiB (S3 rule, except the last one) and
     // an upload has at most 10,000 parts.
@@ -143,6 +152,12 @@ const envSchema = z
     // Playback (Phase 5): how long a signed media URL works. Long enough for a
     // film with seeking; the player asks for a new URL when one expires.
     PLAYBACK_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(43_200).default(3600),
+
+    // Processing (Phase 6, ADR-047).
+    /** Tries per video before it is marked FAILED (transient errors only). */
+    TRANSCODE_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+    /** A video still PROCESSING after this, with no live job, is marked FAILED. */
+    TRANSCODE_STUCK_MINUTES: z.coerce.number().int().min(10).max(1440).default(360),
   })
   .transform((env) => ({
     ...env,
@@ -153,6 +168,8 @@ const envSchema = z
     // A default bucket name is convenient locally and wrong in production.
     S3_BUCKET_UPLOADS:
       env.S3_BUCKET_UPLOADS ?? (env.NODE_ENV === 'production' ? '' : 'streamhub-uploads'),
+    S3_BUCKET_MEDIA:
+      env.S3_BUCKET_MEDIA ?? (env.NODE_ENV === 'production' ? undefined : 'streamhub-media'),
   }))
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === 'production' && env.LOG_PRETTY) {

@@ -20,6 +20,9 @@ import { FavouriteModel, WatchProgressModel } from './library.models.ts';
 /** States in which the uploaded file exists and passed the upload checks. */
 const PREVIEWABLE: readonly ProcessingStatus[] = ['VERIFYING', 'PROCESSING', 'READY'];
 
+/** Segment file names the worker writes (seg_00000.ts). */
+const SEGMENT_NAME = /^seg_\d{5}\.ts$/;
+
 /** Watched this share of the video: counts as finished (credits do not need watching). */
 const COMPLETED_SHARE = 0.95;
 
@@ -35,8 +38,19 @@ export type PlaybackService = ReturnType<typeof createPlaybackService>;
  *    and verified, so administrators can check a video before publishing.
  * Everything else is a 404, never a 403: viewers learn nothing about drafts.
  */
-export function createPlaybackService(deps: { storage: ObjectStorage; config: PlaybackConfig }) {
-  const { storage, config } = deps;
+export function createPlaybackService(deps: {
+  storage: ObjectStorage;
+  /** Media bucket with the worker's HLS output; absent until it exists. */
+  media?: ObjectStorage;
+  config: PlaybackConfig;
+}) {
+  const { storage, media, config } = deps;
+
+  /** HLS is used once the worker has produced it and the media bucket is configured. */
+  const hlsOf = (video: LeanVideo) =>
+    media && video.processingStatus === 'READY' && video.hlsMasterKey && video.hlsPrefix
+      ? { media, prefix: video.hlsPrefix, renditions: video.renditions ?? [] }
+      : null;
 
   async function playable(user: AuthenticatedUser, videoId: string) {
     const video = await VideoModel.findOne({ _id: videoId, deletedAt: null }).lean<LeanVideo>();
@@ -94,23 +108,71 @@ export function createPlaybackService(deps: { storage: ObjectStorage; config: Pl
     async getPlayback(user: AuthenticatedUser, videoId: string): Promise<PlaybackDto> {
       const { video, preview } = await playable(user, videoId);
       const ttl = config.PLAYBACK_URL_TTL_SECONDS;
-      const [url, progress] = await Promise.all([
-        storage.presignGet(video.storageKey!, ttl),
+      const hls = hlsOf(video);
+      const [url, posterUrl, progress] = await Promise.all([
+        hls
+          ? Promise.resolve(`/api/v1/videos/${video._id.toString()}/hls/master.m3u8`)
+          : storage.presignGet(video.storageKey!, ttl),
+        hls && video.thumbnailKey ? hls.media.presignGet(video.thumbnailKey, ttl) : null,
         WatchProgressModel.findOne({ userId: user._id, videoId: video._id })
           .select('positionSeconds completed')
           .lean(),
       ]);
       return {
         videoId: video._id.toString(),
-        kind: 'source',
-        mimeType: video.mimeType ?? 'application/octet-stream',
+        kind: hls ? 'hls' : 'source',
+        mimeType: hls
+          ? 'application/vnd.apple.mpegurl'
+          : (video.mimeType ?? 'application/octet-stream'),
         url,
         expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
         durationSeconds: video.durationSeconds ?? null,
+        posterUrl,
         // A finished video starts again from the beginning.
         resumePositionSeconds: progress && !progress.completed ? progress.positionSeconds : 0,
         preview,
       };
+    },
+
+    /** The master playlist, built from the database: one entry per rendition. */
+    async masterPlaylist(user: AuthenticatedUser, videoId: string): Promise<string> {
+      const { video } = await playable(user, videoId);
+      const hls = hlsOf(video);
+      if (!hls) throw notFound();
+      const lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-INDEPENDENT-SEGMENTS'];
+      for (const r of [...hls.renditions].sort((a, b) => b.bandwidth - a.bandwidth)) {
+        lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${r.bandwidth},RESOLUTION=${r.width}x${r.height}`);
+        lines.push(`${r.name}/index.m3u8`); // relative: resolves to the API route below
+      }
+      return `${lines.join('\n')}\n`;
+    },
+
+    /**
+     * A rendition's media playlist with every segment replaced by a signed
+     * storage URL, so the player fetches segments straight from storage (later
+     * the CDN) and only users allowed to watch get working URLs.
+     */
+    async mediaPlaylist(
+      user: AuthenticatedUser,
+      videoId: string,
+      rendition: string,
+    ): Promise<string> {
+      const { video } = await playable(user, videoId);
+      const hls = hlsOf(video);
+      // Only names the worker reported: no path from the URL reaches storage.
+      if (!hls || !hls.renditions.some((r) => r.name === rendition)) throw notFound();
+      const text = await hls.media.getText(`${hls.prefix}/${rendition}/index.m3u8`, 1024 * 1024);
+      const ttl = config.PLAYBACK_URL_TTL_SECONDS;
+      const lines = await Promise.all(
+        text.split('\n').map(async (raw) => {
+          const line = raw.trim();
+          if (!line || line.startsWith('#')) return line;
+          if (!SEGMENT_NAME.test(line))
+            throw new Error(`unexpected playlist entry in ${video._id.toString()}`);
+          return hls.media.presignGet(`${hls.prefix}/${rendition}/${line}`, ttl);
+        }),
+      );
+      return lines.join('\n');
     },
 
     async saveProgress(user: AuthenticatedUser, videoId: string, positionSeconds: number) {

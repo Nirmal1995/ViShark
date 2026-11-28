@@ -13,7 +13,10 @@ minimumReleaseAge: 1440
 # esbuild (used by tsx) verifies its platform binary on install.
 # @scarf/scarf (pulled in by swagger-ui-dist) only sends install analytics: denied.
 # argon2 (password hashing) selects its prebuilt native binary, or compiles one, on install.
+# msgpackr-extract (optional speed-up for BullMQ's message encoding) would build
+# native code: denied, msgpackr falls back to plain JavaScript.
 allowBuilds:
   '@scarf/scarf': false
   argon2: true
   esbuild: true
+  msgpackr-extract: false

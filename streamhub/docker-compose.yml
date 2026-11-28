@@ -154,6 +154,46 @@ services:
     logging: *default-logging
     networks: [backend]
 
+  # The transcoding worker (Phase 6, ADR-047). Not started by infra:up: run
+  # `pnpm worker:up` when you want uploads processed locally. It talks to Redis
+  # and storage over the Compose network, never to MongoDB.
+  worker:
+    profiles: ['worker']
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: streamhub-worker:local
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://default:${REDIS_PASSWORD:?set in .env}@redis:6379/0
+      S3_ENDPOINT: http://storage:9000
+      S3_REGION: ${S3_REGION:-eu-west-1}
+      S3_FORCE_PATH_STYLE: 'true'
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set in .env}
+      S3_BUCKET_UPLOADS: ${S3_BUCKET_UPLOADS:?set in .env}
+      S3_BUCKET_MEDIA: ${S3_BUCKET_MEDIA:?set in .env}
+    read_only: true
+    # Scratch space for sources and HLS output: a volume, not tmpfs, so large
+    # files do not count against the container's memory limit.
+    volumes:
+      - worker-tmp:/tmp
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    depends_on:
+      redis:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2g
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
 networks:
   backend:
     name: streamhub-backend
@@ -164,3 +204,4 @@ volumes:
   redis-data:
   storage-data:
   mailpit-data:
+  worker-tmp:

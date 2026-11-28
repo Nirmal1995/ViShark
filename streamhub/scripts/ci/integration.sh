@@ -35,6 +35,14 @@ wait_for_docker 60
 info "starting services (project $COMPOSE_PROJECT_NAME)"
 start_infrastructure 240
 
+# The worker's integration tests run real FFmpeg (GitHub runners do not ship it).
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  info "installing ffmpeg for the worker tests"
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null
+fi
+ffmpeg -hide_banner -version | head -1
+
 info "integration tests"
 pnpm -r test:integration --reporter=default "${gh_reporter[@]}" --reporter=junit \
   --outputFile.junit=reports/junit-integration.xml

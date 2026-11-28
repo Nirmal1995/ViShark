@@ -49,6 +49,8 @@ export interface ObjectStorage {
    * when those temporary credentials expire (a few hours on EC2).
    */
   presignGet(key: string, expiresInSeconds: number): Promise<string>;
+  /** A small text object (playlists), refused above maxBytes. */
+  getText(key: string, maxBytes: number): Promise<string>;
   /** Throws if the bucket is unreachable or access is denied. */
   ping(): Promise<void>;
 }
@@ -215,6 +217,12 @@ export class S3ObjectStorage implements ObjectStorage {
       }),
       { expiresIn: expiresInSeconds },
     );
+  }
+
+  async getText(key: string, maxBytes: number): Promise<string> {
+    const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if ((result.ContentLength ?? 0) > maxBytes) throw new Error(`object too large: ${key}`);
+    return result.Body ? result.Body.transformToString('utf-8') : '';
   }
 
   async ping(): Promise<void> {

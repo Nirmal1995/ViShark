@@ -76,7 +76,7 @@ jobs:
     name: API image (build, scan, smoke test)
     needs: checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,6 +92,11 @@ jobs:
         env:
           IMAGE_ARCHIVE: ${{ inputs.publish-image && format('{0}/image/api.tar.gz', runner.temp) || '' }}
         run: bash scripts/ci/image.sh
+
+      # The worker image (Node plus FFmpeg). Same job, so the required status
+      # check keeps its name; build, scan and an HLS encode inside the image.
+      - name: Worker image (build, scan, FFmpeg smoke test)
+        run: bash scripts/ci/worker-image.sh
 
       - name: Hand the tested image to the deploy job
         if: inputs.publish-image
