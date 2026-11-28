@@ -1,5 +1,6 @@
 import type { Server } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { Redis } from 'ioredis';
 import mongoose from 'mongoose';
 import { createApp } from './app.ts';
 import { ConfigError, loadConfig } from './config/env.ts';
@@ -15,10 +16,13 @@ import { catalogRoutes } from './modules/catalog.ts';
 import { ensureIndexes } from './database/indexes.ts';
 import { HealthService } from './modules/health/health.service.ts';
 import { createPlaybackService } from './modules/playback/playback.service.ts';
+import { createProcessingService } from './modules/processing/processing.service.ts';
 import { createUploadsService } from './modules/uploads/uploads.service.ts';
 
 /** How often abandoned uploads are cleaned up. */
 const UPLOAD_EXPIRY_INTERVAL_MS = 15 * 60 * 1000;
+/** How often stuck processing is looked for (lost queue messages). */
+const PROCESSING_RECOVERY_INTERVAL_MS = 5 * 60 * 1000;
 
 const VERSION = process.env.npm_package_version ?? '0.1.0';
 
@@ -69,8 +73,26 @@ function main(): void {
     .catch((err: unknown) =>
       logger.error({ err, bucket: uploadsStorage.bucket }, 'storage not reachable'),
     );
-  const uploads = createUploadsService({ storage: uploadsStorage, config, logger });
-  const playback = createPlaybackService({ storage: uploadsStorage, config });
+  const mediaStorage = config.S3_BUCKET_MEDIA
+    ? new S3ObjectStorage(createS3Client(config), config.S3_BUCKET_MEDIA)
+    : undefined;
+
+  // Queues (ADR-047) get their own connection: BullMQ waits on blocking
+  // commands, unlike the fail-fast client used for rate limits.
+  const queueConnection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+  queueConnection.on('error', (err: Error) =>
+    logger.warn({ component: 'queues', err: { message: err.message } }, 'connection error'),
+  );
+  const processing = createProcessingService({ connection: queueConnection, config, logger });
+  processing.startResultsConsumer();
+
+  const uploads = createUploadsService({
+    storage: uploadsStorage,
+    config,
+    logger,
+    onVerified: (video) => processing.enqueue(video),
+  });
+  const playback = createPlaybackService({ storage: uploadsStorage, media: mediaStorage, config });
   auth.routes.push(...catalogRoutes({ uploads, playback, redis }));
 
   const app = createApp({ config, logger, health, metrics, auth, version: VERSION });
@@ -125,6 +147,13 @@ function main(): void {
     uploads.expireStale().catch((err: unknown) => logger.error({ err }, 'upload expiry failed'));
   }, UPLOAD_EXPIRY_INTERVAL_MS);
   expiryTimer.unref();
+  const recoveryTimer = setInterval(() => {
+    if (mongoose.connection.readyState !== mongoose.ConnectionStates.connected) return;
+    processing
+      .recoverStuck()
+      .catch((err: unknown) => logger.error({ err }, 'processing recovery failed'));
+  }, PROCESSING_RECOVERY_INTERVAL_MS);
+  recoveryTimer.unref();
 
   // Graceful shutdown: stop being "ready" (load balancer drains us), stop
   // accepting connections, let in-flight requests finish, then close
@@ -135,6 +164,7 @@ function main(): void {
     logger.info({ signal }, 'shutdown started');
     health.startDraining();
     clearInterval(expiryTimer);
+    clearInterval(recoveryTimer);
 
     const deadline = setTimeout(() => {
       logger.error('shutdown deadline exceeded, forcing exit');
@@ -150,6 +180,8 @@ function main(): void {
     await mongo
       .disconnect()
       .catch((err: unknown) => logger.error({ err }, 'mongodb disconnect failed'));
+    await processing.close();
+    queueConnection.disconnect();
     redis.disconnect();
     logger.info('shutdown complete');
     logger.flush();

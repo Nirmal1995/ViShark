@@ -17,6 +17,7 @@ import {
   type ObjectStorage,
 } from '../../src/infrastructure/storage.ts';
 import { createPlaybackService } from '../../src/modules/playback/playback.service.ts';
+import type { ProcessingService } from '../../src/modules/processing/processing.service.ts';
 import {
   createUploadsService,
   type UploadsService,
@@ -105,6 +106,11 @@ export async function disconnectTestInfra(): Promise<void> {
   await mongoose.disconnect();
 }
 
+/** The media bucket (the worker's HLS output) from the test configuration. */
+export function testMediaStorage(config = testConfig()): ObjectStorage {
+  return new S3ObjectStorage(createS3Client(config), config.S3_BUCKET_MEDIA ?? 'streamhub-media');
+}
+
 /** The uploads bucket from the test configuration (local MinIO-compatible storage). */
 export function testStorage(config = testConfig()): ObjectStorage {
   return new S3ObjectStorage(createS3Client(config), config.S3_BUCKET_UPLOADS);
@@ -121,11 +127,18 @@ export function buildAuthApp(options: {
   now?: () => number;
   /** Defaults to the real uploads bucket from the test configuration. */
   uploads?: UploadsService;
+  /** Queues processing after uploads; without it, nothing is queued. */
+  processing?: ProcessingService;
 }) {
   const config = options.config ?? testConfig();
   const uploads =
     options.uploads ??
-    createUploadsService({ storage: testStorage(config), config, logger: silentLogger });
+    createUploadsService({
+      storage: testStorage(config),
+      config,
+      logger: silentLogger,
+      ...(options.processing ? { onVerified: (video) => options.processing!.enqueue(video) } : {}),
+    });
   const auth = createAuthModule({
     config,
     logger: silentLogger,
@@ -135,7 +148,11 @@ export function buildAuthApp(options: {
     ...(options.policy ? { policy: options.policy } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
-  const playback = createPlaybackService({ storage: testStorage(config), config });
+  const playback = createPlaybackService({
+    storage: testStorage(config),
+    media: testMediaStorage(config),
+    config,
+  });
   auth.routes.push(
     ...catalogRoutes({ uploads, playback, redis: options.redis }),
     ...(options.extraRoutes ?? []),

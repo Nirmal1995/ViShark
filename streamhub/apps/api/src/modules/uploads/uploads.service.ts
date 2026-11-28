@@ -63,6 +63,8 @@ export function createUploadsService(deps: {
   storage: ObjectStorage;
   config: UploadsConfig;
   logger: Logger;
+  /** Called once a file is verified: queues processing (Phase 6). */
+  onVerified?: (video: { id: string; storageKey: string; mimeType: string }) => Promise<void>;
 }) {
   const { storage, config, logger } = deps;
 
@@ -290,7 +292,13 @@ export function createUploadsService(deps: {
         { returnDocument: 'after' },
       ).lean<LeanUpload>();
       await changeProcessing(videoId, 'VERIFYING');
-      // The worker (Phase 6) picks VERIFYING videos up from here.
+      // Queue processing. If Redis is briefly unavailable the upload still
+      // succeeds: the recovery sweep queues VERIFYING videos without a job.
+      try {
+        await deps.onVerified?.({ id: videoId, storageKey: upload.key, mimeType: upload.mimeType });
+      } catch (err) {
+        logger.warn({ err, videoId }, 'could not queue processing; recovery will retry');
+      }
       return toUploadDto(done ?? upload);
     },
 

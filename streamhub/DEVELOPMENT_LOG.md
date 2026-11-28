@@ -480,3 +480,38 @@ The first run of `scripts/dev/upload-and-play.sh` on the dev server signed in, t
 2. curl does not send a `Secure` cookie back over plain HTTP, even to localhost. The script now keeps the cookie by hand and sends `X-Forwarded-Proto: https`, which is what the edge proxy will send.
 
 Reproduced and fixed in the sandbox by running the API with production settings: before, `401` after sign-in; after, a two-part upload, verification and a `206` range response.
+
+## Phase 6a: transcoding worker and HLS playback (2026-11-28)
+
+The owner chose ECS Fargate Spot for running the worker on AWS (6b). 6a builds and tests everything that does not depend on where it runs.
+
+### What was built
+
+- `apps/worker`: a separate Node service and image (Debian FFmpeg) with no database access. Consumes `video-transcode`, reports `started`, `ready` or `failed` on `video-results`. ffprobe checks (no video stream, unreadable, too small, longer than 4 hours fail at once without retries), one FFmpeg run per rendition (1080p to 360p by the short side, never above the source, H.264 `veryfast` capped CRF, AAC, 6-second segments, 2-second keyframes), a poster image, upload under a fresh prefix, cleanup of partial output, idle exit for Fargate, graceful SIGTERM.
+- API: queues a job per verified upload (job id = video id), consumes results and writes them (READY with duration, size, renditions, poster; FAILED with a reason), audit records with `via: system`, and a recovery sweep every 5 minutes for lost messages.
+- Playback: `kind: hls` for processed videos, the master playlist built from the database, media playlists with signed segment URLs, signed poster URL; rendition names validated against the database. Administrators preview the source until processing finishes.
+- Shared, validated job messages in `@streamhub/contracts` (keys restricted to the video's own prefixes).
+- Local: `pnpm worker:up` (Compose profile `worker`, read-only container, scratch volume), `pnpm dev:worker`. CI: FFmpeg on the runner for the worker tests; a worker image job step (build, Trivy, FFmpeg HLS smoke test inside the image, configuration check).
+- ADR-047.
+
+### Errors encountered
+
+1. TypeScript `erasableSyntaxOnly` rejected a constructor parameter property; rewritten as a plain field.
+2. BullMQ's optional native speed-up (`msgpackr-extract`) wanted an install script; denied in `allowBuilds` (falls back to JavaScript).
+3. `ffprobe` on an MPEG-TS segment prints the size once per program and stream; the test reads the first line.
+4. An encoded traversal attempt (`..%2F..%2Fsource`) is decoded by Express into the rendition parameter and rejected by validation (`400`); the test now expects that.
+5. Two lint findings (an unbound method passed as a callback, an `async` function without `await`).
+
+### Validation done in the assistant sandbox
+
+- `pnpm check`: 130 API unit, 10 worker unit (ladder, master playlist, FFmpeg arguments, probe parsing including rotated phone videos), 30 contracts (new: job messages), 23 shared.
+- Integration: 4 worker tests with real FFmpeg and the S3 emulator (720p source to 720p, 480p, 360p with the 360p segment probed at 640x360; small portrait clip kept at its own size without audio; corrupt file failed at once with nothing left in the media bucket; transient error retried, failure reported only on the last attempt). 146 of 147 API tests pass (10 new: queueing and deduplication, results and duplicates, malformed messages, the results consumer, HLS playlists and signed segments, rendition and permission checks, source preview, recovery); the one failure is the known emulator limitation from Phase 5.
+- End to end in the sandbox: the API and the worker running as processes, a real 8-second 720p clip with audio uploaded with `scripts/dev/upload-and-play.sh`, transcoded in about 4 seconds, the video `READY`, the master playlist listing 720p, 480p and 360p, and a 480p segment fetched through its signed URL and probed at 854x480.
+
+### Acceptance criteria
+
+| Criterion                                                          | Result (sandbox) | Result (owner) |
+| ------------------------------------------------------------------ | ---------------- | -------------- |
+| Sample video becomes READY with the right renditions, no upscaling | pass             | pending        |
+| Corrupt file ends FAILED                                           | pass             | pending        |
+| Worker image builds, scans clean and transcodes inside the image   | CI               | pending        |

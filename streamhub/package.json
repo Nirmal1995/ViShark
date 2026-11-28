@@ -20,6 +20,9 @@
     "infra:reset": "bash scripts/reset-dev-data.sh",
     "infra:test-db": "bash scripts/mongo-test-db.sh",
     "dev:api": "pnpm --filter @streamhub/api dev",
+    "dev:worker": "pnpm --filter @streamhub/worker dev",
+    "worker:up": "docker compose --profile worker up -d --build worker",
+    "worker:logs": "docker compose --profile worker logs -f worker",
     "admin:create": "pnpm --filter @streamhub/api admin:create",
     "admin:mfa-reset": "pnpm --filter @streamhub/api admin:mfa-reset",
     "db:migrate": "pnpm --filter @streamhub/api db:migrate",
@@ -34,7 +37,8 @@
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "ci:toolchain": "bash scripts/ci/toolchain.sh",
     "ci:security": "bash scripts/ci/security-scan.sh",
-    "ci:image": "bash scripts/ci/image.sh"
+    "ci:image": "bash scripts/ci/image.sh",
+    "ci:worker-image": "bash scripts/ci/worker-image.sh"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "3.1164.0",

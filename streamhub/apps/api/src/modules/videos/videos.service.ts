@@ -198,6 +198,9 @@ export async function changeProcessing(
       | 'height'
       | 'thumbnailKey'
       | 'failureReason'
+      | 'hlsPrefix'
+      | 'hlsMasterKey'
+      | 'renditions'
     >
   > = {},
 ) {

@@ -91,10 +91,12 @@ Metadata only; the files live in private object storage under generated keys.
 | `publicationStatus`                  | enum                   | `DRAFT`, `PUBLISHED`, `ARCHIVED`                                                  |
 | `processingStatus`                   | enum                   | `INITIATED`, `UPLOADING`, `VERIFYING`, `PROCESSING`, `READY`, `FAILED`, `ABORTED` |
 | `storageKey`                         | string \| null         | object key of the original upload (Phase 4b); never returned by the API           |
-| `thumbnailKey`                       | string \| null         | (Phase 6); never returned by the API                                              |
+| `thumbnailKey`                       | string \| null         | poster image in the media bucket (Phase 6); served as a signed URL                |
 | `mimeType`, `sizeBytes`              | string, number \| null | verified after upload (Phase 4b)                                                  |
 | `durationSeconds`, `width`, `height` | number \| null         | measured by the worker (Phase 6)                                                  |
 | `failureReason`                      | string \| null         | short, operator-facing reason when processing failed                              |
+| `hlsPrefix`, `hlsMasterKey`          | string \| null         | the worker's HLS output in the media bucket (Phase 6); never returned by the API  |
+| `renditions`                         | array                  | `{ name, width, height, bandwidth }` per rendition, e.g. `720p`                   |
 | `publishedAt`                        | Date \| null           | set on publish, cleared on unpublish                                              |
 | `deletedAt`                          | Date \| null           | soft delete: excluded from every query; files removed by a cleanup job            |
 | `createdAt`, `updatedAt`             | Date                   |                                                                                   |

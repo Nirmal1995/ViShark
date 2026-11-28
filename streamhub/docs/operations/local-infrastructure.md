@@ -2,13 +2,14 @@
 
 ## Services
 
-| Service        | Image                                     | Purpose                             | Host port(s)               | Volume                       |
-| -------------- | ----------------------------------------- | ----------------------------------- | -------------------------- | ---------------------------- |
-| `mongo`        | `mongo:8.0`                               | System of record                    | 27017                      | `mongo-data`, `mongo-config` |
-| `redis`        | `redis:8.4-alpine`                        | BullMQ queues, rate limits          | 6379                       | `redis-data`                 |
-| `storage`      | `pgsty/silo:RELEASE.2026-10-15T00-00-00Z` | S3-compatible object storage        | 9000 (API), 9001 (console) | `storage-data`               |
-| `storage-init` | same as storage                           | One-shot: buckets, app user, policy | none                       | none                         |
-| `mailpit`      | `axllent/mailpit:v1.30.5`                 | Captures outgoing email             | 1025 (SMTP), 8025 (UI)     | `mailpit-data`               |
+| Service        | Image                                     | Purpose                               | Host port(s)               | Volume                       |
+| -------------- | ----------------------------------------- | ------------------------------------- | -------------------------- | ---------------------------- |
+| `mongo`        | `mongo:8.0`                               | System of record                      | 27017                      | `mongo-data`, `mongo-config` |
+| `redis`        | `redis:8.4-alpine`                        | BullMQ queues, rate limits            | 6379                       | `redis-data`                 |
+| `storage`      | `pgsty/silo:RELEASE.2026-10-15T00-00-00Z` | S3-compatible object storage          | 9000 (API), 9001 (console) | `storage-data`               |
+| `storage-init` | same as storage                           | One-shot: buckets, app user, policy   | none                       | none                         |
+| `mailpit`      | `axllent/mailpit:v1.30.5`                 | Captures outgoing email               | 1025 (SMTP), 8025 (UI)     | `mailpit-data`               |
+| `worker`       | built from `apps/worker/Dockerfile`       | FFmpeg transcoding (profile `worker`) | none                       | `worker-tmp`                 |
 
 All services share the `streamhub-backend` network and publish ports on `127.0.0.1` only. Compose project name: `streamhub`.
 
@@ -27,6 +28,17 @@ pnpm infra:up
 ```
 
 `pnpm infra:up` starts the four long-running services with `docker compose up --wait` (fails if any is not healthy within 240 seconds), then runs `storage-init` to completion with `docker compose run` (fails if it exits non-zero). The job is kept out of `up --wait` on purpose: Compose counts any container that exits during the wait as a failure, even with exit code 0, which made start-up pass or fail depending on timing.
+
+## The worker (Phase 6)
+
+`pnpm infra:up` does not start the worker. Start it when you want uploads processed locally:
+
+```bash
+pnpm worker:up     # builds the image (Node plus FFmpeg) and starts it
+pnpm worker:logs   # follow its JSON logs
+```
+
+It reaches Redis and storage over the Compose network (`redis:6379`, `storage:9000`) with the same least-privilege storage user as the API, and never talks to MongoDB: results go back through the `video-results` queue (ADR-047). Scratch files live in the `worker-tmp` volume, not in memory. To run it on the host instead (`pnpm dev:worker`), install FFmpeg in WSL first: `sudo apt install ffmpeg`. The worker's integration tests (`pnpm test:integration`) need FFmpeg on the host too.
 
 ## Credentials model
 

@@ -769,6 +769,48 @@ export function buildOpenApiDocument(version: string) {
           },
         },
       },
+      '/api/v1/videos/{id}/hls/master.m3u8': {
+        get: {
+          tags: ['library'],
+          summary: 'HLS master playlist',
+          description:
+            'For processed videos (playback kind hls). Lists one media playlist per rendition. Send the session cookie; the response is private and never cached. 120 playlist requests per minute per user.',
+          security: sessionOnly,
+          parameters: [idParam],
+          responses: {
+            '200': {
+              description: 'Master playlist',
+              content: { 'application/vnd.apple.mpegurl': { schema: { type: 'string' } } },
+            },
+            ...errors('401', '403', '404', '429'),
+          },
+        },
+      },
+      '/api/v1/videos/{id}/hls/{rendition}/index.m3u8': {
+        get: {
+          tags: ['library'],
+          summary: 'HLS media playlist for one rendition',
+          description:
+            'Segment entries are signed storage URLs (valid for the playback URL lifetime), so the player downloads segments straight from storage.',
+          security: sessionOnly,
+          parameters: [
+            idParam,
+            {
+              name: 'rendition',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^\\d{3,4}p$', example: '720p' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Media playlist',
+              content: { 'application/vnd.apple.mpegurl': { schema: { type: 'string' } } },
+            },
+            ...errors('400', '401', '403', '404', '429'),
+          },
+        },
+      },
       '/api/v1/videos/{id}/progress': {
         put: {
           tags: ['library'],

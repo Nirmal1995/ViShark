@@ -21,18 +21,23 @@ export type ProgressBody = z.infer<typeof progressBodySchema>;
 export const playbackDtoSchema = z.object({
   videoId: objectIdSchema,
   /**
-   * `source`: the uploaded file (progressive MP4/WebM). `hls` arrives with the
-   * worker (Phase 6), served by the CDN.
+   * `hls`: adaptive streaming, once the worker has processed the video. The
+   * URL is the API's master playlist; its media playlists carry signed
+   * segment URLs. `source`: the uploaded file itself (progressive), used for
+   * administrator previews before processing finishes.
    */
-  kind: z.enum(['source']),
+  kind: z.enum(['hls', 'source']),
   mimeType: z.string(),
   url: z.string().meta({
-    description: 'Signed media URL for the player. Supports range requests (206).',
+    description:
+      'For hls: the master playlist (an API path; send the session cookie). For source: a signed storage URL that supports range requests (206).',
   }),
   expiresAt: z.iso.datetime().meta({
     description: 'Ask for a new URL after this (also when the player gets a 403).',
   }),
   durationSeconds: z.number().nullable(),
+  /** Signed poster image URL, once the worker has made one. */
+  posterUrl: z.string().nullable(),
   resumePositionSeconds: z.number(),
   /** True when an administrator previews a video viewers cannot watch yet. */
   preview: z.boolean(),
